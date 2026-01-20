@@ -31,6 +31,14 @@ const PLANS = [
   }
 ];
 
+const bengaliToEnglish = (str: string) => {
+  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
+  return str.split('').map(char => {
+    const index = bengaliDigits.indexOf(char);
+    return index !== -1 ? index : char;
+  }).join('');
+};
+
 export const SubscriptionPlans: React.FC<SubscriptionPlansProps> = ({ userTier, onBack, onSubmitPayment, pendingRequest }) => {
   const [selectedPlan, setSelectedPlan] = useState<typeof PLANS[0] | null>(null);
   const [bkashNumber, setBkashNumber] = useState('');
@@ -42,10 +50,16 @@ export const SubscriptionPlans: React.FC<SubscriptionPlansProps> = ({ userTier, 
     if (!selectedPlan || !bkashNumber || !trxId) return;
     
     setIsSubmitting(true);
+    
+    // Convert Bengali digits to English for correct parsing
+    const numericPart = selectedPlan.price.replace('৳', '');
+    const englishNumeric = bengaliToEnglish(numericPart);
+    const amount = parseInt(englishNumeric);
+
     setTimeout(() => {
       onSubmitPayment({
         tier: selectedPlan.tier,
-        amount: parseInt(selectedPlan.price.replace('৳', '')),
+        amount: isNaN(amount) ? 0 : amount,
         bkashNumber,
         trxId
       });

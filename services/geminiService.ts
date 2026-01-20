@@ -5,11 +5,12 @@ export class GeminiService {
   private chat: Chat | null = null;
 
   private getClient() {
-    const apiKey = process.env.API_KEY;
+    // Rely on environment variable as per instructions
+    const apiKey = process.env.API_KEY || "";
     if (!apiKey) {
-      console.error("API Key is missing. Ensure process.env.API_KEY is defined in vite.config.ts or build settings.");
+      console.warn("Gemini API Key is missing. Check environment variables.");
     }
-    return new GoogleGenAI({ apiKey: apiKey || "" });
+    return new GoogleGenAI({ apiKey });
   }
 
   public initChat(systemInstruction: string) {
