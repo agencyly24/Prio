@@ -1,5 +1,5 @@
 {
-  "name": "Priyo - Virtual Companion",
+  "name": "Priyo",
   "description": "An emotionally engaging AI virtual girlfriend app for Bangladeshi users, featuring text chat and real-time voice conversations in Bangla.",
   "requestFramePermissions": [
     "microphone"

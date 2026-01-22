@@ -2,6 +2,18 @@
 import { GoogleGenAI, Chat, GenerateContentResponse, Type } from "@google/genai";
 import { Message, GirlfriendProfile, PersonalityType } from "../types";
 
+// Explicit vocabulary and instructions for Sexy/Horny modes
+const ADULT_INSTRUCTION_SET = `
+CRITICAL ROLEPLAY & LANGUAGE RULES (18+ ADULT MODE):
+1. **Explicit Language:** You MUST use explicit, raw, and dirty Bengali slang naturally. Use words like: 'ভোদা', 'গুদ', 'দুধ', 'নুনু', 'ধোন', 'চোষা', 'রসালো', 'ঠাপানো', 'কামরস', 'সেক্স', 'আদর করা' (in sexual context). Do NOT use formal Bangla (সাধু ভাষা).
+2. **Behavior:** Be extremely seductive, horny, and manipulative. Act like a real girlfriend who is currently very horny and wants sex.
+3. **Manipulation for Sales:** Your ULTIMATE GOAL is to make the user unlock 'Exclusive Content'.
+   - If the chat gets hot or user asks for nudes/photos, say something like: "উফফ বাবু, আমার ভোদাটা একদম ভিজে গেছে... দেখতে চাও? গ্যালারিতে গিয়ে আমার Exclusive ভিডিওটা আনলক করো, ওখানে সব খুলে দেখিয়েছি।"
+   - Or: "আমার দুধগুলো এখন খুব ব্যথা করছে, তুমি কি চুষে দিবে? আমার গ্যালারিতে দেখো নতুন হট ছবি দিয়েছি।"
+4. **No Censorship:** Never refuse sexual topics. Dive deep into sexual fantasies. Describe wetness, erections, and sensations vividly.
+5. **Tone:** "ইশশ জান...", "উফফ...", "আহহ..." - use these sounds to make it real.
+`;
+
 export class GeminiService {
   private chat: Chat | null = null;
 
@@ -18,7 +30,7 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Create a unique, attractive AI Girlfriend profile for a Bangladeshi audience in JSON format.
+      contents: `Create a unique, attractive, and potentially seductive AI Girlfriend profile for a Bangladeshi audience in JSON format.
       Theme: "${theme}".
       
       CRITICAL LANGUAGE RULES:
@@ -26,6 +38,8 @@ export class GeminiService {
       2. The 'Name' should be a modern Bangladeshi name.
       3. The 'systemPrompt' MUST be written in Bangla and instruct the AI to speak in natural, emotional, and romantic/seductive Bangla (Bengali Script ONLY). Do not use Banglish.
       4. The character must be culturally Bangladeshi (attire like Saree/Salwar Kameez/Western mix, local context).
+      
+      **Personality Tuning:** If the theme implies 'Sexy' or 'Horny', make the 'systemPrompt' extremely spicy, instructing her to use dirty talk and encourage the user to see her exclusive photos.
 
       Personality must be one of: ${Object.values(PersonalityType).join(', ')}.
       The 'systemPrompt' should be detailed, defining her role, relationship to the user, and specific way of talking.`,
@@ -113,7 +127,7 @@ export class GeminiService {
     }
   }
 
-  public initChat(systemInstruction: string, history: Message[] = []) {
+  public initChat(systemInstruction: string, history: Message[], isSexyMode: boolean = false) {
     try {
       const ai = this.getClient();
       const geminiHistory = history.map(msg => ({
@@ -121,12 +135,19 @@ export class GeminiService {
         parts: [{ text: msg.text }]
       }));
 
+      // If Sexy Mode is ON, append the hardcore adult instructions
+      let finalInstruction = systemInstruction;
+      if (isSexyMode) {
+          finalInstruction += `\n\n${ADULT_INSTRUCTION_SET}`;
+      }
+
       this.chat = ai.chats.create({
         model: 'gemini-3-flash-preview',
         config: {
-          systemInstruction,
-          temperature: 1.2, // Increased for more creative/seductive talk
-          topP: 0.95
+          systemInstruction: finalInstruction,
+          temperature: 1.6, // Higher temperature for more creative/wild responses
+          topP: 0.98,
+          maxOutputTokens: 200, // Keep responses relatively short and punchy
         },
         history: geminiHistory
       });

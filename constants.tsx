@@ -9,7 +9,6 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     discountPrice: 600,
     features: [
       'স্মার্ট আনলিমিটেড চ্যাট',
-      'আনলিমিটেড ভয়েস রিপ্লাই',
       '১টি AI গার্ল প্রোফাইল',
       'গার্লফ্রেন্ড স্টাইল কথা'
     ],
@@ -23,8 +22,8 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     discountPrice: 900,
     features: [
       '২টি AI গার্ল প্রোফাইল',
-      'রোমান্টিক ভয়েস টোন',
-      'গভীর রাতের মিষ্টি আওয়াজ'
+      'গভীর ইমোশনাল কানেকশন',
+      'মিষ্টি রোমান্টিক টেক্সট'
     ],
     profileLimit: 2,
     color: 'purple'
@@ -36,6 +35,7 @@ export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
     discountPrice: 1400,
     features: [
       'সব AI গার্ল প্রোফাইল অ্যাক্সেস',
+      'সরাসরি ভয়েস কল (Voice Call)',
       'ফুল রোমান্টিক + রোলপ্লে মোড',
       'গোল্ডেন VIP ব্যাজ'
     ],

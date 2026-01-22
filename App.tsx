@@ -29,7 +29,7 @@ const DEFAULT_USER: UserProfile = {
   isVIP: false,
   isAdmin: false, // CHANGED: Default to false to prevent write errors on load
   // Initial Wallet State
-  credits: 50, // Bonus starter credits
+  credits: 5, // Bonus starter credits
   unlockedContentIds: [],
   subscriptionExpiry: undefined,
   stats: {
@@ -458,7 +458,7 @@ const App: React.FC = () => {
         {view === 'chat' && selectedProfile && (
           <ChatInterface 
             profile={selectedProfile} onBack={() => setView('profile-detail')} onMenuOpen={() => setIsSidebarOpen(true)}
-            userName={userProfile.name} isPremium={userProfile.isPremium} onUpgrade={() => setView('subscription')}
+            userName={userProfile.name} isPremium={userProfile.isPremium} userTier={userProfile.tier} onUpgrade={() => setView('subscription')}
             history={chatHistories[selectedProfile.id] || []} onSaveHistory={(msgs) => updateChatHistory(selectedProfile.id, msgs)}
           />
         )}

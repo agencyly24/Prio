@@ -35,12 +35,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   // --- States for Smart Model Creator ---
   const [isAddingCompanion, setIsAddingCompanion] = useState(false);
   const [isAiGenerating, setIsAiGenerating] = useState(false);
-  const [isGeneratingExclusive, setIsGeneratingExclusive] = useState(false); // NEW STATE
+  const [isGeneratingExclusive, setIsGeneratingExclusive] = useState(false);
   const [aiTheme, setAiTheme] = useState('');
   const [editingCompanionId, setEditingCompanionId] = useState<string | null>(null);
   const [knowledgeInput, setKnowledgeInput] = useState(''); 
+  
+  // URL Input States
+  const [mainImageUrlInput, setMainImageUrlInput] = useState('');
   const [galleryUrlInput, setGalleryUrlInput] = useState('');
   const [galleryUrlType, setGalleryUrlType] = useState<'image' | 'video'>('image');
+  
   const [exclusiveForm, setExclusiveForm] = useState({ title: '', tease: '', creditCost: '50', isExclusive: false });
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -158,11 +162,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     } catch (e) { alert("AI Error"); } finally { setIsAiGenerating(false); }
   };
 
-  // NEW: Generate Exclusive Metadata
   const handleGenerateExclusiveMetadata = async () => {
     setIsGeneratingExclusive(true);
     try {
-      // Use the model's name or theme or a generic 'Sexy' context
       const context = compForm.name ? `${compForm.name} - ${compForm.personality}` : aiTheme || "Sexy Bangladeshi Girlfriend";
       const result = await gemini.generateExclusiveContentMetadata(context);
       setExclusiveForm(prev => ({ ...prev, title: result.title, tease: result.tease }));
@@ -178,6 +180,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       setCompForm(prev => ({ ...prev, knowledge: [...(prev.knowledge || []), knowledgeInput.trim()] }));
       setKnowledgeInput('');
     }
+  };
+
+  // URL Helper to convert Google Drive links to direct view links
+  const processUrl = (url: string) => {
+    if (url.includes('drive.google.com') && url.includes('/file/d/')) {
+        const idMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        if (idMatch && idMatch[1]) {
+            return `https://drive.google.com/uc?export=view&id=${idMatch[1]}`;
+        }
+    }
+    return url;
+  };
+
+  const handleAddMainImageLink = () => {
+    if(!mainImageUrlInput.trim()) return;
+    setCompForm(prev => ({ ...prev, image: processUrl(mainImageUrlInput.trim()) }));
+    setMainImageUrlInput('');
+  };
+
+  const handleAddGalleryLink = () => {
+    if (!galleryUrlInput.trim()) return;
+    const finalUrl = processUrl(galleryUrlInput.trim());
+    
+    const newItem: ProfileGalleryItem = { 
+        id: 'media_' + Math.random().toString(36).substr(2, 9),
+        type: galleryUrlType, 
+        url: finalUrl,
+        isExclusive: exclusiveForm.isExclusive,
+        creditCost: exclusiveForm.isExclusive ? parseInt(exclusiveForm.creditCost) : undefined,
+        title: exclusiveForm.isExclusive ? exclusiveForm.title : undefined,
+        tease: exclusiveForm.isExclusive ? exclusiveForm.tease : undefined
+    };
+    setCompForm(prev => ({ ...prev, gallery: [...(prev.gallery || []), newItem] }));
+    setGalleryUrlInput('');
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'main' | 'gallery') => {
@@ -271,7 +307,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         {/* Main Content */}
         <main className="flex-1 p-6 md:p-10 overflow-y-auto">
-           {/* ... Dashboard, Finance, Influencers tabs (unchanged) ... */}
            {activeTab === 'dashboard' && (
              <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4">
                 <h1 className="text-3xl font-black">Overview</h1>
@@ -332,9 +367,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
              </div>
            )}
 
-           {/* Influencers and Models tabs (truncated for brevity, logic exists in original) */}
            {activeTab === 'influencers' && (
-             // ... Influencer content ...
              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* List & Create */}
                 <div className="lg:col-span-1 space-y-8">
@@ -469,10 +502,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                <option>Kore</option><option>Puck</option><option>Charon</option>
                             </select>
                          </div>
-                         <div className="border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center p-4 cursor-pointer hover:border-blue-500/50 transition-colors" onClick={() => fileInputRef.current?.click()}>
+                         <div className="border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center p-4">
                             {compForm.image ? <img src={compForm.image} className="h-32 w-32 object-cover rounded-full mb-2" /> : <div className="h-20 w-20 bg-white/5 rounded-full mb-2"></div>}
-                            <span className="text-xs font-bold text-gray-500">Upload Avatar</span>
+                            <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-blue-500 hover:underline mb-2">Upload File</button>
                             <input ref={fileInputRef} type="file" hidden onChange={e => handleImageUpload(e, 'main')} />
+                            
+                            <div className="flex gap-2 w-full mt-2">
+                               <input 
+                                 type="text" 
+                                 value={mainImageUrlInput} 
+                                 onChange={e => setMainImageUrlInput(e.target.value)} 
+                                 placeholder="Or paste direct image link..." 
+                                 className="flex-1 bg-black/20 p-2 rounded-xl border border-white/5 text-[10px] focus:outline-none" 
+                               />
+                               <button type="button" onClick={handleAddMainImageLink} className="bg-white/10 px-3 rounded-xl text-[10px] font-bold hover:bg-white/20">Add</button>
+                            </div>
                          </div>
                       </div>
                       <textarea placeholder="Intro Message" value={compForm.intro} onChange={e => setCompForm({...compForm, intro: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none h-24" />
@@ -544,17 +588,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                          )}
                       </div>
 
+                      {/* URL Input Row */}
+                      <div className="flex gap-2 bg-black/20 p-3 rounded-2xl border border-white/5">
+                        <input 
+                            type="text" 
+                            value={galleryUrlInput} 
+                            onChange={e => setGalleryUrlInput(e.target.value)} 
+                            placeholder="Paste Image/Video Link (Google Drive supported)..." 
+                            className="flex-1 bg-transparent p-2 text-sm focus:outline-none placeholder:text-gray-600" 
+                        />
+                        <select 
+                            value={galleryUrlType} 
+                            onChange={e => setGalleryUrlType(e.target.value as any)}
+                            className="bg-white/5 rounded-xl text-xs px-3 outline-none text-gray-400 border border-white/5"
+                        >
+                            <option value="image">Image</option>
+                            <option value="video">Video</option>
+                        </select>
+                        <button type="button" onClick={handleAddGalleryLink} className="bg-blue-600 px-6 rounded-xl font-bold text-xs uppercase hover:bg-blue-500 transition-colors shadow-lg">Add Link</button>
+                      </div>
+
                       <div className="flex gap-4">
-                         <button type="button" onClick={() => galleryInputRef.current?.click()} className="flex-1 py-4 border border-dashed border-white/20 rounded-2xl text-gray-400 hover:text-white hover:border-white/40 transition-all font-bold text-sm">Upload Images/Videos</button>
+                         <button type="button" onClick={() => galleryInputRef.current?.click()} className="flex-1 py-4 border border-dashed border-white/20 rounded-2xl text-gray-400 hover:text-white hover:border-white/40 transition-all font-bold text-sm">Upload Local Files</button>
                          <input ref={galleryInputRef} type="file" multiple hidden onChange={e => handleImageUpload(e, 'gallery')} />
                       </div>
                       
                       <div className="grid grid-cols-5 gap-3">
                          {compForm.gallery?.map((item, i) => (
-                            <div key={i} className="relative aspect-square rounded-xl overflow-hidden group">
-                               <img src={item.url} className="w-full h-full object-cover" />
+                            <div key={i} className="relative aspect-square rounded-xl overflow-hidden group border border-white/10">
+                               {item.type === 'image' ? (
+                                 <img src={item.url} className="w-full h-full object-cover" />
+                               ) : (
+                                 <div className="w-full h-full bg-slate-900 flex items-center justify-center text-gray-500 text-xs font-bold uppercase">Video</div>
+                               )}
+                               
                                {item.isExclusive && <div className="absolute inset-0 bg-yellow-500/20 border-2 border-yellow-500 rounded-xl pointer-events-none"></div>}
-                               <button type="button" onClick={() => setCompForm(prev => ({...prev, gallery: prev.gallery?.filter((_, idx) => idx !== i)}))} className="absolute top-1 right-1 bg-red-600 h-6 w-6 rounded-full flex items-center justify-center text-white text-xs">×</button>
+                               
+                               <button type="button" onClick={() => setCompForm(prev => ({...prev, gallery: prev.gallery?.filter((_, idx) => idx !== i)}))} className="absolute top-1 right-1 bg-red-600 h-6 w-6 rounded-full flex items-center justify-center text-white text-xs shadow-lg">×</button>
+                               
+                               {/* Type Badge */}
+                               <span className="absolute bottom-1 left-1 bg-black/60 backdrop-blur-md px-2 py-0.5 rounded text-[8px] font-black uppercase tracking-widest text-gray-300">{item.type}</span>
                             </div>
                          ))}
                       </div>
