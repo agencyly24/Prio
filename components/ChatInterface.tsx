@@ -32,7 +32,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       : profile.systemPrompt;
       
     // Load history or intro
-    const initialMsgs = history.length > 0 ? history : [
+    // Fix: Explicitly type as Message[] to avoid TypeScript inference errors on sender type
+    const initialMsgs: Message[] = history.length > 0 ? history : [
       {
         id: 'welcome',
         sender: 'ai',

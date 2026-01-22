@@ -125,10 +125,10 @@ export class GeminiService {
         model: 'gemini-3-flash-preview',
         config: {
           systemInstruction,
-          history: geminiHistory,
           temperature: 1.2, // Increased for more creative/seductive talk
           topP: 0.95
         },
+        history: geminiHistory
       });
     } catch (error) {
       console.error("Failed to initialize chat:", error);
