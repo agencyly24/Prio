@@ -92,7 +92,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
       setStatus('connecting');
       setErrorMessage('');
 
-      // DIRECT API KEY USAGE - No external selection tool dependency
+      // DIRECT API KEY USAGE - Updated to API_KEY
       const apiKey = process.env.API_KEY;
       
       if (!apiKey || apiKey === "undefined") {

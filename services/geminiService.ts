@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Chat, Type } from "@google/genai";
 import { Message, GirlfriendProfile, PersonalityType } from "../types";
 
@@ -29,7 +30,14 @@ class GeminiService {
 
   constructor() {
     // API KEY must be obtained exclusively from process.env.API_KEY
-    this.ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    // Safety check: Use a placeholder if empty to prevent 'ApiError: API key must be set' crash on startup.
+    // The actual API call will fail gracefully later if the key is invalid.
+    const apiKey = process.env.API_KEY || "missing-api-key";
+    
+    if (apiKey === "missing-api-key") {
+      console.warn("⚠️ Gemini API Key is missing! Chat features will not work. Please set API_KEY in your environment.");
+    }
+    this.ai = new GoogleGenAI({ apiKey });
   }
 
   public initChat(systemPrompt: string, history: Message[], isSexyMode: boolean) {
