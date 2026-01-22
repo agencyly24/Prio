@@ -10,6 +10,7 @@ interface UserAccountProps {
   profiles: GirlfriendProfile[];
   onSelectProfile: (profile: GirlfriendProfile) => void;
   onPurchaseCredits: () => void;
+  onLogout: () => void; // Added onLogout prop
 }
 
 const AVATARS = [
@@ -28,7 +29,8 @@ export const UserAccount: React.FC<UserAccountProps> = ({
   chatHistories,
   profiles,
   onSelectProfile,
-  onPurchaseCredits
+  onPurchaseCredits,
+  onLogout
 }) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editedName, setEditedName] = useState(userProfile.name);
@@ -139,6 +141,14 @@ export const UserAccount: React.FC<UserAccountProps> = ({
                     Save Changes
                   </button>
                 )}
+
+              {/* LOGOUT BUTTON */}
+              <button 
+                onClick={onLogout}
+                className="mt-4 px-8 py-3 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/20 text-red-500 hover:bg-red-500 hover:text-white transition-all w-full"
+              >
+                Logout Account
+              </button>
             </div>
 
             {/* Profile Edit Mode */}

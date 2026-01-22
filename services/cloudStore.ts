@@ -1,5 +1,5 @@
 import { supabase } from "./supabase";
-import { GirlfriendProfile } from "../types";
+import { GirlfriendProfile, PaymentRequest } from "../types";
 
 // We use a generic 'app_data' table to simulate the previous Firestore logic
 // Table schema assumption: id (text, PK), data (jsonb), updated_at (timestamptz)
@@ -56,6 +56,47 @@ export const cloudStore = {
       } else {
          console.error("❌ Failed to load from Cloud:", e.message);
       }
+    }
+    return null;
+  },
+
+  // Save Payment Requests to Supabase (simulating a table)
+  async savePaymentRequests(requests: PaymentRequest[]) {
+    if (!supabase) return;
+
+    try {
+      const { error } = await supabase
+        .from('app_data')
+        .upsert({ 
+          id: 'payment_requests', 
+          data: requests, 
+          updated_at: new Date().toISOString() 
+        });
+
+      if (error) throw error;
+    } catch (e: any) {
+      console.error("❌ Failed to save payment requests:", e.message);
+    }
+  },
+
+  // Load Payment Requests
+  async loadPaymentRequests(): Promise<PaymentRequest[] | null> {
+    if (!supabase) return null;
+
+    try {
+      const { data, error } = await supabase
+        .from('app_data')
+        .select('data')
+        .eq('id', 'payment_requests')
+        .single();
+
+      if (error) throw error;
+      
+      if (data && data.data) {
+        return data.data as PaymentRequest[];
+      }
+    } catch (e: any) {
+      // Ignore not found error
     }
     return null;
   }

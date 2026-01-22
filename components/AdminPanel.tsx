@@ -5,6 +5,7 @@ import {
   PersonalityType, ProfileGalleryItem, ReferralProfile, ReferralTransaction
 } from '../types';
 import { gemini } from '../services/geminiService';
+import { supabase } from '../services/supabase';
 
 interface AdminPanelProps {
   paymentRequests: PaymentRequest[];
@@ -84,30 +85,43 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   }, [paymentRequests, referralTransactions]);
 
   // --- Payment Logic ---
-  const handleApprovePayment = (req: PaymentRequest) => {
+  const handleApprovePayment = async (req: PaymentRequest) => {
     const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
     setPaymentRequests(updatedRequests);
 
-    if (req.userId === userProfile.id) {
-       if (req.tier) {
-         // Calculate Expiry Date (30 Days from now)
-         const expiryDate = new Date();
-         expiryDate.setDate(expiryDate.getDate() + 30);
+    // 1. Fetch current profile from DB to ensure we add credits to existing balance
+    const { data: existingProfile } = await supabase.from('profiles').select('credits').eq('id', req.userId).single();
+    const currentCredits = existingProfile?.credits || 0;
 
-         setUserProfile(prev => ({ 
-             ...prev, 
-             tier: req.tier!, 
-             isPremium: true,
-             subscriptionExpiry: expiryDate.toISOString()
-         }));
-       }
-       if (req.creditPackageId && req.amount) {
-         let creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
-         setUserProfile(prev => ({ ...prev, credits: (prev.credits || 0) + creditsToAdd }));
-       }
-       alert(`Payment Approved for ${req.userName}`);
+    let updateData: any = {};
+
+    if (req.tier) {
+       // Calculate Expiry Date (30 Days from now)
+       const expiryDate = new Date();
+       expiryDate.setDate(expiryDate.getDate() + 30);
+       
+       updateData.tier = req.tier;
+       updateData.is_premium = true;
+       updateData.subscription_expiry = expiryDate.toISOString();
     }
 
+    if (req.creditPackageId && req.amount) {
+       let creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
+       updateData.credits = currentCredits + creditsToAdd;
+    }
+
+    // 2. Update Supabase Profile
+    if (Object.keys(updateData).length > 0) {
+       const { error } = await supabase.from('profiles').update(updateData).eq('id', req.userId);
+       if (error) {
+         console.error("Failed to update user profile in DB", error);
+         alert("Failed to update user profile in Database!");
+       } else {
+         alert(`Payment Approved & User ${req.userName} Updated!`);
+       }
+    }
+
+    // 3. Handle Referral
     if (req.referralId) {
       const referral = referrals.find(r => r.id === req.referralId);
       if (referral) {
@@ -366,7 +380,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 ))}
              </div>
            )}
-
+           
+           {/* ... existing code for other tabs ... */}
            {activeTab === 'influencers' && (
              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* List & Create */}

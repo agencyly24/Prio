@@ -101,42 +101,54 @@ const App: React.FC = () => {
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        // Auto-login logic
-        if (!isLoggedIn) {
-           const isAdminUser = session.user.email === 'admin@priyo.com';
-           
-           // Fetch user name from profiles table
-           let userName = localStorage.getItem('priyo_user_name') || '';
-           if (!userName) {
-              const { data: profileData } = await supabase
-                  .from('profiles')
-                  .select('name')
-                  .eq('id', session.user.id)
-                  .single();
-              if (profileData) userName = profileData.name;
-           }
+        setIsLoadingCloud(true);
+        const isAdminUser = session.user.email === 'admin@priyo.com';
 
-           setUserProfile(prev => ({ 
-             ...prev, 
-             id: session.user.id, 
-             name: userName || prev.name, 
-             isAdmin: isAdminUser 
-           }));
-           
-           setIsLoggedIn(true);
-           // Don't show modal on auto-login if name exists
-           if (!userName) {
-             setShowNameModal(true);
-           }
+        // 1. Fetch Latest Profile Data from DB
+        try {
+          const { data: profileData, error } = await supabase
+            .from('profiles')
+            .select('*')
+            .eq('id', session.user.id)
+            .single();
+
+          if (profileData && !error) {
+             setUserProfile(prev => ({ 
+               ...prev, 
+               id: session.user.id, 
+               name: profileData.name || prev.name,
+               email: session.user.email,
+               tier: profileData.tier || 'Free',
+               credits: profileData.credits || 0,
+               isPremium: profileData.is_premium || false,
+               subscriptionExpiry: profileData.subscription_expiry,
+               isAdmin: isAdminUser
+             }));
+             // Update local storage name if present
+             if (profileData.name) localStorage.setItem('priyo_user_name', profileData.name);
+          }
+        } catch(e) {
+          console.error("Error fetching user profile:", e);
         }
 
-        setIsLoadingCloud(true);
-        // Load cloud profiles
+        // 2. Load Cloud Data (Profiles & Requests)
         const cloudProfiles = await cloudStore.loadProfiles();
         if (cloudProfiles && cloudProfiles.length > 0) {
           setProfiles(cloudProfiles);
-          localStorage.setItem('priyo_dynamic_profiles', JSON.stringify(cloudProfiles));
         }
+
+        const cloudRequests = await cloudStore.loadPaymentRequests();
+        if (cloudRequests) {
+           setPaymentRequests(cloudRequests);
+        }
+
+        setIsLoggedIn(true);
+        
+        // Handle view redirection if necessary
+        if (view === 'landing') {
+           // Do nothing, let user click Enter
+        }
+
         setIsLoadingCloud(false);
       }
     });
@@ -144,18 +156,26 @@ const App: React.FC = () => {
     return () => subscription.unsubscribe();
   }, []);
 
-  // Cloud Sync Effect - Save on Change (ONLY IF ADMIN)
+  // Cloud Sync Effect - Profiles (Admin Only)
   useEffect(() => {
     localStorage.setItem('priyo_dynamic_profiles', JSON.stringify(profiles));
-    // Only attempt to save to cloud if logged in AND user is admin
     if (profiles.length > 0 && isLoggedIn && userProfile.isAdmin) {
        cloudStore.saveProfiles(profiles);
     }
   }, [profiles, isLoggedIn, userProfile.isAdmin]);
 
+  // Cloud Sync Effect - Requests (Any change needs sync, but handled carefully)
+  useEffect(() => {
+    localStorage.setItem('priyo_payment_requests', JSON.stringify(paymentRequests));
+    // In a real app, this would be an INSERT, but we use app_data as a store.
+    // We only save to cloud if the list length changes (new request) or status changes (admin action)
+    if (paymentRequests.length > 0 && isLoggedIn) {
+       cloudStore.savePaymentRequests(paymentRequests);
+    }
+  }, [paymentRequests, isLoggedIn]);
+
   useEffect(() => localStorage.setItem('priyo_user_profile', JSON.stringify(userProfile)), [userProfile]);
   useEffect(() => localStorage.setItem('priyo_chat_histories', JSON.stringify(chatHistories)), [chatHistories]);
-  useEffect(() => localStorage.setItem('priyo_payment_requests', JSON.stringify(paymentRequests)), [paymentRequests]);
   useEffect(() => localStorage.setItem('priyo_referrals', JSON.stringify(referrals)), [referrals]);
   useEffect(() => localStorage.setItem('priyo_referral_txs', JSON.stringify(referralTransactions)), [referralTransactions]);
   useEffect(() => localStorage.setItem('priyo_voice_enabled', String(voiceEnabled)), [voiceEnabled]);
@@ -173,6 +193,7 @@ const App: React.FC = () => {
   };
 
   const handleLoginSuccess = (user: { name: string; email?: string; avatar?: string; uid?: string }) => {
+    // This is handled by onAuthStateChange largely, but we keep immediate state update for UI responsiveness
     const isAdminUser = user.email === 'admin@priyo.com'; 
     
     setUserProfile(prev => ({ 
@@ -201,7 +222,7 @@ const App: React.FC = () => {
     setUserProfile(prev => ({ ...prev, name: finalName }));
     localStorage.setItem('priyo_user_name', finalName);
     
-    // Attempt to update name in Supabase profiles if possible
+    // Attempt to update name in Supabase profiles
     supabase.from('profiles').update({ name: finalName }).eq('id', userProfile.id).then(() => {});
 
     setShowNameModal(false);
@@ -237,6 +258,7 @@ const App: React.FC = () => {
     setSelectedProfile(null);
     setProfiles(INITIAL_PROFILES);
     setChatHistories({});
+    // Go to landing page
     setView('landing');
   };
 
@@ -249,6 +271,7 @@ const App: React.FC = () => {
       status: 'pending',
       timestamp: new Date().toLocaleString()
     };
+    // Update local state, which triggers useEffect to save to cloud
     setPaymentRequests([newRequest, ...paymentRequests]);
   };
 
@@ -262,11 +285,16 @@ const App: React.FC = () => {
 
   const handleUnlockContent = (contentId: string, cost: number): boolean => {
     if (userProfile.credits >= cost) {
+      const newCredits = userProfile.credits - cost;
       setUserProfile(prev => ({
         ...prev,
-        credits: prev.credits - cost,
+        credits: newCredits,
         unlockedContentIds: [...prev.unlockedContentIds, contentId]
       }));
+      
+      // Update credits in DB immediately
+      supabase.from('profiles').update({ credits: newCredits }).eq('id', userProfile.id).then(() => {});
+
       return true;
     }
     return false;
@@ -451,6 +479,7 @@ const App: React.FC = () => {
             profiles={profiles}
             onSelectProfile={handleProfileSelect}
             onPurchaseCredits={() => setShowCreditModal(true)}
+            onLogout={handleLogout}
           />
         )}
         
