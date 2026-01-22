@@ -1,4 +1,8 @@
 
-// Supabase has been removed as per request.
-// The system now uses 'services/cloudStore.ts' for robust data persistence.
-export const supabase = null;
+import { createClient } from "@supabase/supabase-js";
+
+// Supabase config
+const supabaseUrl = "https://gsojiwgfswtuhfbrldui.supabase.co";
+const supabaseKey = "sb_publishable_PjxCZBLI4DXIJ3MBryHvaw_V_3rJZIS";
+
+export const supabase = createClient(supabaseUrl, supabaseKey);

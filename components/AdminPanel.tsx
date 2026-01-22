@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { gemini } from '../services/geminiService';
 import { cloudStore } from '../services/cloudStore';
+import { supabase } from '../services/supabase'; // Import supabase
 
 interface AdminPanelProps {
   paymentRequests: PaymentRequest[];
@@ -17,7 +18,7 @@ interface AdminPanelProps {
   referrals: ReferralProfile[];
   setReferrals: React.Dispatch<React.SetStateAction<ReferralProfile[]>>;
   referralTransactions: ReferralTransaction[];
-  setReferralTransactions: React.Dispatch<React.SetStateAction<ReferralTransaction[]>>;
+  setReferralTransactions: React.SetStateAction<ReferralTransaction[]>;
   onBack: () => void;
 }
 
@@ -65,7 +66,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (passcode === 'Mishela') setIsAuthenticated(true);
+    // Simplified passcode for local admin. In real app, this would be supabase auth too.
+    if (passcode === 'Mishela') setIsAuthenticated(true); 
     else setPasscode('');
   };
 
@@ -78,53 +80,80 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return { totalRevenue, pendingRevenue, totalCommissions, paidCommissions, pendingCommissions };
   }, [paymentRequests, referralTransactions]);
 
-  // --- Payment Approval Logic (FIXED & CONNECTED) ---
+  // --- Payment Approval Logic (FIXED & CONNECTED to Supabase) ---
   const handleApprovePayment = async (req: PaymentRequest) => {
     try {
+        if (!supabase) throw new Error("Supabase client is not initialized.");
         console.log("Approving payment for user:", req.userId);
         
-        // 1. Get Current User Data from Cloud
-        const currentUserData = await cloudStore.getUser(req.userId);
-        if (!currentUserData) throw new Error("User not found in database");
-
-        // 2. Calculate New State
-        let updates: Partial<UserProfile> = {};
+        // 1. Prepare Update Data for Supabase 'profiles' table
+        let updateData: any = {};
         
-        // Add Credits
+        // Fetch current profile to get credits
+        const { data: currentProfile, error: fetchError } = await supabase
+          .from('profiles')
+          .select('credits')
+          .eq('id', req.userId)
+          .single();
+          
+        if (fetchError) console.error("Could not fetch current credits, assuming 0", fetchError);
+        
+        const currentCredits = currentProfile?.credits || 0;
+        let newCredits = currentCredits;
+
+        // Logic for Credits
         if (req.creditPackageId && req.amount) {
            const creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
-           updates.credits = (currentUserData.credits || 0) + creditsToAdd;
+           newCredits += creditsToAdd;
+           updateData.credits = newCredits;
         }
 
-        // Activate Subscription
+        // Logic for Subscription Tier
         if (req.tier) {
            const expiryDate = new Date();
-           expiryDate.setDate(expiryDate.getDate() + 30);
+           expiryDate.setDate(expiryDate.getDate() + 30); // 30 Days validity
            
-           updates.tier = req.tier;
-           updates.isPremium = true;
-           updates.isVIP = req.tier === 'VIP';
-           updates.subscriptionExpiry = expiryDate.toISOString();
+           updateData.tier = req.tier;
+           updateData.is_premium = true;
+           updateData.is_vip = req.tier === 'VIP'; // Set is_vip based on tier
+           updateData.subscription_expiry = expiryDate.toISOString();
         }
 
-        // 3. Update User in Cloud Store
-        const updatedUser = await cloudStore.updateUser(req.userId, updates);
-        
-        // 4. Update Request Status
+        // 2. Update Supabase Database 'profiles' table
+        const { error: updateError } = await supabase
+            .from('profiles')
+            .update(updateData)
+            .eq('id', req.userId);
+
+        if (updateError) throw updateError;
+
+        // 3. Update Request Status (Local & CloudStore - which saves to Supabase app_data)
         const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
         setPaymentRequests(updatedRequests);
         await cloudStore.savePaymentRequests(updatedRequests);
 
-        // 5. If I am the user being approved, update my local state immediately
-        if (req.userId === userProfile.id && updatedUser) {
-            setUserProfile(updatedUser);
+        // 4. Handle Referral Commission (If any) - (Remains Local State only for now)
+        if (req.referralId) {
+          const referral = referrals.find(r => r.id === req.referralId);
+          if (referral) {
+            const commissionAmount = Math.floor(req.amount * (referral.commissionRate / 100));
+            const newTx: ReferralTransaction = {
+              id: 'tx_' + Math.random().toString(36).substr(2, 9),
+              referralId: req.referralId,
+              amount: commissionAmount,
+              status: 'pending',
+              timestamp: new Date().toLocaleString(),
+              note: `Comm. from ${req.userName} (${req.amount}Tk)`
+            };
+            setReferralTransactions(prev => [newTx, ...prev]);
+          }
         }
 
-        alert(`✅ Payment Approved! User ${req.userName} is now active.`);
+        alert(`✅ Payment Approved successfully!\nUser: ${req.userName}\nPlan: ${req.tier || 'Credits'}`);
 
     } catch (error: any) {
-        console.error("Approval Failed:", error);
-        alert(`❌ Failed: ${error.message}`);
+        console.error("Payment Approval Failed:", error);
+        alert(`❌ Error activating package: ${error.message}\nCheck console for details.`);
     }
   };
 
@@ -134,7 +163,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     await cloudStore.savePaymentRequests(updatedRequests);
   };
 
-  // --- Model Saving Logic (FIXED PERSISTENCE) ---
+  // --- Model Saving Logic (FIXED PERSISTENCE via cloudStore to Supabase app_data) ---
   const handleSaveCompanion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!compForm.name || !compForm.image) return alert('Name & Image required');
@@ -154,12 +183,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     // Update State
     setProfiles(updatedProfiles);
     
-    // Save to Cloud Store (LocalStorage) immediately
-    await cloudStore.saveProfiles(updatedProfiles);
-    
-    alert('✅ Model Saved to System! Reloading will not lose data.');
-    setIsAddingCompanion(false);
-    setEditingCompanionId(null);
+    // Save to Cloud Store (which uses Supabase app_data) immediately
+    try {
+        await cloudStore.saveProfiles(updatedProfiles);
+        alert('✅ Model Profile Saved to Cloud Successfully!');
+        
+        // Reset form
+        setIsAddingCompanion(false);
+        setEditingCompanionId(null);
+    } catch (err: any) {
+        alert('❌ Failed to save to cloud: ' + err.message);
+    }
   };
 
   const handleMagicGenerate = async () => {

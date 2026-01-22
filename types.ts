@@ -86,6 +86,7 @@ export interface GirlfriendProfile {
 export interface UserProfile {
   id: string;
   name: string;
+  email?: string; // Add email property
   avatar: string;
   bio: string;
   level: number;
