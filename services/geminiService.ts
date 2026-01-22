@@ -47,30 +47,41 @@ class GeminiService {
       history: formattedHistory,
       config: {
         systemInstruction: finalSystemInstruction,
-        // Using string literals for safety settings to ensure compatibility with @google/genai SDK
+        // Using 'as any' to bypass TypeScript checks for safety settings string literals,
+        // ensuring compatibility with the @google/genai SDK during build.
         safetySettings: [
             { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
             { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
             { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
             { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' }
-        ]
+        ] as any
       }
     });
   }
 
   public async sendMessage(text: string): Promise<string> {
     if (!this.chatSession) throw new Error("Chat not initialized");
-    const response = await this.chatSession.sendMessage({ message: text });
-    return response.text || "";
+    try {
+        const response = await this.chatSession.sendMessage({ message: text });
+        return response.text || "";
+    } catch (error) {
+        console.error("Gemini SendMessage Error:", error);
+        throw error;
+    }
   }
 
   public async *sendMessageStream(text: string): AsyncGenerator<string, void, unknown> {
     if (!this.chatSession) throw new Error("Chat not initialized");
-    const result = await this.chatSession.sendMessageStream({ message: text });
-    for await (const chunk of result) {
-        if (chunk.text) {
-            yield chunk.text;
+    try {
+        const result = await this.chatSession.sendMessageStream({ message: text });
+        for await (const chunk of result) {
+            if (chunk.text) {
+                yield chunk.text;
+            }
         }
+    } catch (error) {
+        console.error("Gemini SendMessageStream Error:", error);
+        throw error;
     }
   }
 
@@ -102,40 +113,50 @@ class GeminiService {
     }
     Ensure all text fields (except technical ones like voiceName) are in Bengali where appropriate for a Bangladeshi context.`;
 
-    const response = await this.ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
-        contents: prompt,
-        config: {
-            responseMimeType: 'application/json'
+    try {
+        const response = await this.ai.models.generateContent({
+            model: 'gemini-3-flash-preview',
+            contents: prompt,
+            config: {
+                responseMimeType: 'application/json'
+            }
+        });
+        
+        if (response.text) {
+            return JSON.parse(response.text);
         }
-    });
-    
-    if (response.text) {
-        return JSON.parse(response.text);
+        throw new Error("Empty response text");
+    } catch (error) {
+        console.error("Magic Profile Gen Error:", error);
+        throw error;
     }
-    throw new Error("Failed to generate profile");
   }
 
   public async generateExclusiveContentMetadata(context: string): Promise<{ title: string; tease: string }> {
-      const response = await this.ai.models.generateContent({
-          model: 'gemini-3-flash-preview',
-          contents: `Generate a seductive title and tease for exclusive content. Context: ${context}`,
-          config: {
-              responseMimeType: 'application/json',
-              responseSchema: {
-                  type: Type.OBJECT,
-                  properties: {
-                      title: { type: Type.STRING },
-                      tease: { type: Type.STRING }
-                  },
-                  required: ['title', 'tease']
+      try {
+          const response = await this.ai.models.generateContent({
+              model: 'gemini-3-flash-preview',
+              contents: `Generate a seductive title and tease for exclusive content. Context: ${context}`,
+              config: {
+                  responseMimeType: 'application/json',
+                  responseSchema: {
+                      type: Type.OBJECT,
+                      properties: {
+                          title: { type: Type.STRING },
+                          tease: { type: Type.STRING }
+                      },
+                      required: ['title', 'tease']
+                  }
               }
+          });
+          if (response.text) {
+              return JSON.parse(response.text);
           }
-      });
-      if (response.text) {
-          return JSON.parse(response.text);
+          return { title: "Exclusive", tease: "Unlock to see more..." };
+      } catch (error) {
+          console.error("Metadata Gen Error:", error);
+          return { title: "Exclusive", tease: "Unlock to see more..." };
       }
-      return { title: "Exclusive", tease: "Unlock to see more..." };
   }
 }
 
