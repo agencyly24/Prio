@@ -10,7 +10,7 @@
     <style>
         body {
             font-family: 'Hind Siliguri', sans-serif;
-            background: #0f172a;
+            background: #0f0518; /* Deep rich dark violet base instead of sad gray/black */
             color: #fff;
             margin: 0;
             overflow-x: hidden;
@@ -29,7 +29,7 @@
             width: 5px;
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(236, 72, 153, 0.2); /* Pink tint scrollbar */
             border-radius: 10px;
         }
         @keyframes blob {
@@ -39,7 +39,7 @@
             100% { transform: translate(0px, 0px) scale(1); }
         }
         .animate-blob {
-            animation: blob 7s infinite;
+            animation: blob 10s infinite;
         }
         .animation-delay-2000 {
             animation-delay: 2s;
@@ -53,10 +53,11 @@
   "imports": {
     "react/": "https://esm.sh/react@^19.2.3/",
     "react": "https://esm.sh/react@^19.2.3",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai@^1.37.0",
+    "firebase/": "https://esm.sh/firebase@^12.8.0/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
     "vite": "https://esm.sh/vite@^7.3.1",
-    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2"
+    "@vitejs/plugin-react": "https://esm.sh/@vitejs/plugin-react@^5.1.2",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/"
   }
 }
 </script>

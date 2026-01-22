@@ -1,4 +1,37 @@
 
+export type SubscriptionTier = 'Free' | 'Priya' | 'MonChoya' | 'VIP';
+
+export interface SubscriptionPlan {
+  id: SubscriptionTier;
+  name: string;
+  price: number;
+  discountPrice: number;
+  features: string[];
+  profileLimit: number;
+  color: string;
+}
+
+export interface ReferralProfile {
+  id: string;
+  name: string;
+  couponCode: string;
+  commissionRate: number; // Percentage (e.g. 20%)
+  discountAmount: number; // Fixed Amount (e.g. 100 Tk)
+  status: 'active' | 'inactive';
+  paymentInfo?: string; // Bkash/Nagad number
+  totalEarnings?: number; // Calculated field
+  paidEarnings?: number; // Calculated field
+}
+
+export interface ReferralTransaction {
+  id: string;
+  referralId: string;
+  amount: number;
+  status: 'pending' | 'paid' | 'rejected';
+  timestamp: string;
+  note?: string;
+}
+
 export enum PersonalityType {
   Sweet = 'Sweet & Caring',
   Romantic = 'Romantic & Flirty',
@@ -13,11 +46,14 @@ export enum PersonalityType {
   Friend = 'Just Friend'
 }
 
-export type SubscriptionTier = 'Free' | 'Gold' | 'Diamond';
-
 export interface ProfileGalleryItem {
+  id?: string; // Unique ID for unlocking
   type: 'image' | 'video';
   url: string;
+  isExclusive?: boolean; // New: Is it premium content?
+  creditCost?: number;   // New: Cost to unlock
+  title?: string;        // New: Seductive Title
+  tease?: string;        // New: Tease Note
 }
 
 export interface GirlfriendProfile {
@@ -29,6 +65,7 @@ export interface GirlfriendProfile {
   voiceName: string;
   intro: string;
   systemPrompt: string;
+  knowledge?: string[]; // New: Topics the AI knows about (Context/Lore)
   appearance: {
     ethnicity: string;
     eyeColor: string;
@@ -46,18 +83,6 @@ export interface GirlfriendProfile {
   gallery: ProfileGalleryItem[];
 }
 
-export interface PaymentRequest {
-  id: string;
-  userId: string;
-  userName: string;
-  tier: SubscriptionTier;
-  amount: number;
-  bkashNumber: string;
-  trxId: string;
-  status: 'pending' | 'approved' | 'rejected';
-  timestamp: string;
-}
-
 export interface UserProfile {
   id: string;
   name: string;
@@ -68,12 +93,33 @@ export interface UserProfile {
   joinedDate: string;
   tier: SubscriptionTier;
   isPremium: boolean;
+  isVIP: boolean;
   isAdmin: boolean;
+  subscriptionExpiry?: string; // ISO Date string for expiration tracking
+  // New Wallet Fields
+  credits: number; 
+  unlockedContentIds: string[];
   stats: {
     messagesSent: number;
     hoursChatted: number;
     companionsMet: number;
   };
+}
+
+export interface PaymentRequest {
+  id: string;
+  userId: string;
+  userName: string;
+  tier?: SubscriptionTier; // Optional for credit purchase
+  creditPackageId?: string; // New for credits
+  amount: number;
+  discountApplied: number;
+  bkashNumber: string;
+  trxId: string;
+  status: 'pending' | 'approved' | 'rejected';
+  timestamp: string;
+  couponUsed?: string;
+  referralId?: string;
 }
 
 export interface Message {
@@ -83,4 +129,25 @@ export interface Message {
   timestamp: Date;
 }
 
+export interface CreditPackage {
+  id: string;
+  name: string;
+  credits: number;
+  price: number;
+  badge?: string;
+}
+
 export type View = 'landing' | 'auth' | 'age-verification' | 'profile-selection' | 'profile-detail' | 'chat' | 'account' | 'subscription' | 'admin-panel';
+
+// Declare window.aistudio as it's assumed to be pre-configured and accessible.
+// This is for TypeScript type safety.
+// REMOVED: According to coding guidelines, this is assumed to be globally available.
+// If it's globally available, declaring it here leads to duplicate identifier errors.
+// declare global {
+//   interface Window {
+//     aistudio: {
+//       hasSelectedApiKey: () => Promise<boolean>;
+//       openSelectKey: () => Promise<void>;
+//     };
+//   }
+// }
