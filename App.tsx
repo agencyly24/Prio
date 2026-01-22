@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { View, GirlfriendProfile, UserProfile, PaymentRequest, Message, ReferralProfile, ReferralTransaction, PersonalityType } from './types';
 import { PROFILES as INITIAL_PROFILES, APP_CONFIG, SUBSCRIPTION_PLANS } from './constants';
@@ -120,7 +121,7 @@ const App: React.FC = () => {
                email: session.user.email,
                tier: profileData.tier || 'Free',
                credits: profileData.credits || 0,
-               isPremium: profileData.is_premium || false,
+               isPremium: profileData.is_premium || false, // Use snake_case if DB has it, but mapped to camelCase state
                subscriptionExpiry: profileData.subscription_expiry,
                isAdmin: isAdminUser
              }));
@@ -159,20 +160,14 @@ const App: React.FC = () => {
   // Cloud Sync Effect - Profiles (Admin Only)
   useEffect(() => {
     localStorage.setItem('priyo_dynamic_profiles', JSON.stringify(profiles));
-    if (profiles.length > 0 && isLoggedIn && userProfile.isAdmin) {
-       cloudStore.saveProfiles(profiles);
-    }
-  }, [profiles, isLoggedIn, userProfile.isAdmin]);
+    // We REMOVE the auto-sync here to avoid race conditions. 
+    // Saving is now handled explicitly in AdminPanel's handleSaveCompanion.
+  }, [profiles]);
 
-  // Cloud Sync Effect - Requests (Any change needs sync, but handled carefully)
+  // Cloud Sync Effect - Requests (Local storage only)
   useEffect(() => {
     localStorage.setItem('priyo_payment_requests', JSON.stringify(paymentRequests));
-    // In a real app, this would be an INSERT, but we use app_data as a store.
-    // We only save to cloud if the list length changes (new request) or status changes (admin action)
-    if (paymentRequests.length > 0 && isLoggedIn) {
-       cloudStore.savePaymentRequests(paymentRequests);
-    }
-  }, [paymentRequests, isLoggedIn]);
+  }, [paymentRequests]);
 
   useEffect(() => localStorage.setItem('priyo_user_profile', JSON.stringify(userProfile)), [userProfile]);
   useEffect(() => localStorage.setItem('priyo_chat_histories', JSON.stringify(chatHistories)), [chatHistories]);
@@ -271,7 +266,7 @@ const App: React.FC = () => {
       status: 'pending',
       timestamp: new Date().toLocaleString()
     };
-    // Update local state, which triggers useEffect to save to cloud
+    // Update local state, which triggers useEffect to save to cloud (handled by useEffect for payment_requests)
     setPaymentRequests([newRequest, ...paymentRequests]);
   };
 

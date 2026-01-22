@@ -1,3 +1,4 @@
+
 import { supabase } from "./supabase";
 import { GirlfriendProfile, PaymentRequest } from "../types";
 
@@ -17,6 +18,7 @@ export const cloudStore = {
     }
 
     try {
+      // Ensure we are saving JSON data correctly
       const { error } = await supabase
         .from('app_data')
         .upsert({ 
@@ -29,6 +31,7 @@ export const cloudStore = {
       console.log("✅ Profiles synced to Supabase");
     } catch (e: any) {
       console.error("❌ Failed to save to Cloud:", e.message);
+      throw e; // Re-throw to alert user
     }
   },
 

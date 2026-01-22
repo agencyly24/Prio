@@ -6,7 +6,7 @@ import {
 } from '../types';
 import { gemini } from '../services/geminiService';
 import { supabase } from '../services/supabase';
-import { cloudStore } from '../services/cloudStore'; // Import cloudStore
+import { cloudStore } from '../services/cloudStore';
 
 interface AdminPanelProps {
   paymentRequests: PaymentRequest[];
@@ -85,39 +85,45 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return { totalRevenue, pendingRevenue, totalCommissions, paidCommissions, pendingCommissions };
   }, [paymentRequests, referralTransactions]);
 
-  // --- Payment Logic ---
+  // --- Payment Logic (FIXED) ---
   const handleApprovePayment = async (req: PaymentRequest) => {
     try {
-        // 1. Calculate updates
+        console.log("Approving payment for user:", req.userId);
+        
+        // 1. Prepare Update Data
         let updateData: any = {};
-        let creditsToAdd = 0;
+        
+        // Fetch current profile to get credits
+        const { data: currentProfile, error: fetchError } = await supabase
+          .from('profiles')
+          .select('credits')
+          .eq('id', req.userId)
+          .single();
+          
+        if (fetchError) console.error("Could not fetch current credits, assuming 0", fetchError);
+        
+        const currentCredits = currentProfile?.credits || 0;
+        let newCredits = currentCredits;
 
+        // Logic for Credits
+        if (req.creditPackageId && req.amount) {
+           const creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
+           newCredits += creditsToAdd;
+           updateData.credits = newCredits;
+        }
+
+        // Logic for Subscription Tier
         if (req.tier) {
            const expiryDate = new Date();
-           expiryDate.setDate(expiryDate.getDate() + 30);
+           expiryDate.setDate(expiryDate.getDate() + 30); // 30 Days validity
            
            updateData.tier = req.tier;
            updateData.is_premium = true;
+           updateData.is_active = true; // As per your requirement
            updateData.subscription_expiry = expiryDate.toISOString();
         }
 
-        if (req.creditPackageId && req.amount) {
-           creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
-        }
-
-        // 2. Fetch current user data from Supabase to safely increment credits
-        const { data: userData, error: fetchError } = await supabase
-            .from('profiles')
-            .select('credits')
-            .eq('id', req.userId)
-            .single();
-
-        // Warning if user not found, but we proceed if it's just a fetch error (maybe column missing but update might work?)
-        // Actually, if fetch fails, we assume 0 credits.
-        const currentCredits = userData?.credits || 0;
-        updateData.credits = currentCredits + creditsToAdd;
-
-        // 3. Update Supabase Profile
+        // 2. Update Supabase Database
         const { error: updateError } = await supabase
             .from('profiles')
             .update(updateData)
@@ -125,14 +131,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
         if (updateError) throw updateError;
 
-        // 4. Update Local State & Persist Request Status
+        // 3. Update Request Status (Local & Cloud)
         const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
         setPaymentRequests(updatedRequests);
-        
-        // Critical: Save payment requests to Cloud Store so status remains 'approved' on reload
         await cloudStore.savePaymentRequests(updatedRequests);
 
-        // 5. Handle Referral
+        // 4. Handle Referral Commission (If any)
         if (req.referralId) {
           const referral = referrals.find(r => r.id === req.referralId);
           if (referral) {
@@ -146,15 +150,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               note: `Comm. from ${req.userName} (${req.amount}Tk)`
             };
             setReferralTransactions(prev => [newTx, ...prev]);
-            // Note: Referrals should also be saved to cloudStore ideally, but focusing on core issues first
           }
         }
 
-        alert(`✅ Payment Approved for ${req.userName}\nPackage: ${req.tier || 'Credits'}\nUser Balance Updated.`);
+        alert(`✅ Payment Approved successfully!\nUser: ${req.userName}\nPlan: ${req.tier || 'Credits'}`);
 
     } catch (error: any) {
         console.error("Payment Approval Failed:", error);
-        alert(`❌ Failed to activate package: ${error.message}\n(Hint: Check if 'credits', 'tier', 'is_premium' columns exist in Supabase 'profiles' table)`);
+        alert(`❌ Error activating package: ${error.message}\nCheck console for details.`);
     }
   };
 
@@ -164,7 +167,41 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     await cloudStore.savePaymentRequests(updatedRequests);
   };
 
-  // --- Influencer Logic ---
+  // --- Model Logic (FIXED Saving) ---
+  const handleSaveCompanion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!compForm.name || !compForm.image) return alert('Name & Image required');
+    
+    // Create new profile object
+    const newProfile = { 
+        ...compForm as GirlfriendProfile, 
+        id: editingCompanionId || 'comp_' + Math.random().toString(36).substr(2, 9) 
+    };
+
+    let updatedProfiles: GirlfriendProfile[];
+    if (editingCompanionId) {
+        updatedProfiles = profiles.map(p => p.id === editingCompanionId ? newProfile : p);
+    } else {
+        updatedProfiles = [...profiles, newProfile];
+    }
+    
+    // 1. Update React State
+    setProfiles(updatedProfiles);
+    
+    // 2. Save to Supabase (Cloud Store) IMMEDIATELY
+    try {
+        await cloudStore.saveProfiles(updatedProfiles);
+        alert('✅ Model Profile Saved to Database Successfully!');
+        
+        // Reset form
+        setIsAddingCompanion(false);
+        setEditingCompanionId(null);
+    } catch (err: any) {
+        alert('❌ Failed to save to database: ' + err.message);
+    }
+  };
+
+  // --- Other Logic remains similar ---
   const handleCreateReferral = (e: React.FormEvent) => {
     e.preventDefault();
     if (!refForm.name || !refForm.couponCode) return;
@@ -187,7 +224,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // --- Model Logic ---
   const handleMagicGenerate = async () => {
     if (!aiTheme.trim()) return alert("Enter a theme first!");
     setIsAiGenerating(true);
@@ -217,7 +253,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // URL Helper to convert Google Drive links to direct view links
   const processUrl = (url: string) => {
     if (url.includes('drive.google.com') && url.includes('/file/d/')) {
         const idMatch = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -275,32 +310,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         };
         reader.readAsDataURL(file as Blob);
       });
-    }
-  };
-
-  const handleSaveCompanion = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!compForm.name || !compForm.image) return alert('Name & Image required');
-    
-    let updatedProfiles: GirlfriendProfile[];
-    if (editingCompanionId) {
-        updatedProfiles = profiles.map(p => p.id === editingCompanionId ? { ...p, ...compForm as GirlfriendProfile } : p);
-    } else {
-        updatedProfiles = [...profiles, { ...compForm as GirlfriendProfile, id: 'comp_' + Math.random().toString(36).substr(2, 9) }];
-    }
-    
-    // 1. Update Local State (Optimistic)
-    setProfiles(updatedProfiles);
-    
-    // 2. Save to Cloud IMMEDIATELY with feedback
-    try {
-        await cloudStore.saveProfiles(updatedProfiles);
-        alert('✅ Model Profile Saved to Cloud Successfully!');
-        
-        setIsAddingCompanion(false);
-        setEditingCompanionId(null);
-    } catch (err: any) {
-        alert('❌ Failed to save to cloud: ' + err.message);
     }
   };
 

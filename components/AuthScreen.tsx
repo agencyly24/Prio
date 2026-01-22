@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { supabase } from '../services/supabase';
 
@@ -34,7 +35,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onBack, 
         if (authError) throw authError;
 
         if (authData.user) {
-          // 2. Save user data to 'profiles' table as requested
+          // 2. Save user data to 'profiles' table immediately
           const { error: profileError } = await supabase
             .from('profiles')
             .insert([
@@ -42,13 +43,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onLoginSuccess, onBack, 
                 id: authData.user.id, 
                 email: email, 
                 name: name,
-                created_at: new Date().toISOString()
+                is_active: false, // Default active status
+                credits: 5 // Default credits
               }
             ]);
 
           if (profileError) {
              console.error("Profile creation error:", profileError);
-             // Continue anyway as auth was successful
+             // Alert user but continue as auth succeeded
           }
 
           localStorage.setItem('priyo_is_logged_in', 'true');
