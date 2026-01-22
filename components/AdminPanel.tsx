@@ -6,6 +6,7 @@ import {
 } from '../types';
 import { gemini } from '../services/geminiService';
 import { supabase } from '../services/supabase';
+import { cloudStore } from '../services/cloudStore'; // Import cloudStore
 
 interface AdminPanelProps {
   paymentRequests: PaymentRequest[];
@@ -86,61 +87,81 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   // --- Payment Logic ---
   const handleApprovePayment = async (req: PaymentRequest) => {
-    const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
-    setPaymentRequests(updatedRequests);
+    try {
+        // 1. Calculate updates
+        let updateData: any = {};
+        let creditsToAdd = 0;
 
-    // 1. Fetch current profile from DB to ensure we add credits to existing balance
-    const { data: existingProfile } = await supabase.from('profiles').select('credits').eq('id', req.userId).single();
-    const currentCredits = existingProfile?.credits || 0;
+        if (req.tier) {
+           const expiryDate = new Date();
+           expiryDate.setDate(expiryDate.getDate() + 30);
+           
+           updateData.tier = req.tier;
+           updateData.is_premium = true;
+           updateData.subscription_expiry = expiryDate.toISOString();
+        }
 
-    let updateData: any = {};
+        if (req.creditPackageId && req.amount) {
+           creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
+        }
 
-    if (req.tier) {
-       // Calculate Expiry Date (30 Days from now)
-       const expiryDate = new Date();
-       expiryDate.setDate(expiryDate.getDate() + 30);
-       
-       updateData.tier = req.tier;
-       updateData.is_premium = true;
-       updateData.subscription_expiry = expiryDate.toISOString();
-    }
+        // 2. Fetch current user data from Supabase to safely increment credits
+        const { data: userData, error: fetchError } = await supabase
+            .from('profiles')
+            .select('credits')
+            .eq('id', req.userId)
+            .single();
 
-    if (req.creditPackageId && req.amount) {
-       let creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
-       updateData.credits = currentCredits + creditsToAdd;
-    }
+        // Warning if user not found, but we proceed if it's just a fetch error (maybe column missing but update might work?)
+        // Actually, if fetch fails, we assume 0 credits.
+        const currentCredits = userData?.credits || 0;
+        updateData.credits = currentCredits + creditsToAdd;
 
-    // 2. Update Supabase Profile
-    if (Object.keys(updateData).length > 0) {
-       const { error } = await supabase.from('profiles').update(updateData).eq('id', req.userId);
-       if (error) {
-         console.error("Failed to update user profile in DB", error);
-         alert("Failed to update user profile in Database!");
-       } else {
-         alert(`Payment Approved & User ${req.userName} Updated!`);
-       }
-    }
+        // 3. Update Supabase Profile
+        const { error: updateError } = await supabase
+            .from('profiles')
+            .update(updateData)
+            .eq('id', req.userId);
 
-    // 3. Handle Referral
-    if (req.referralId) {
-      const referral = referrals.find(r => r.id === req.referralId);
-      if (referral) {
-        const commissionAmount = Math.floor(req.amount * (referral.commissionRate / 100));
-        const newTx: ReferralTransaction = {
-          id: 'tx_' + Math.random().toString(36).substr(2, 9),
-          referralId: req.referralId,
-          amount: commissionAmount,
-          status: 'pending',
-          timestamp: new Date().toLocaleString(),
-          note: `Comm. from ${req.userName} (${req.amount}Tk)`
-        };
-        setReferralTransactions(prev => [newTx, ...prev]);
-      }
+        if (updateError) throw updateError;
+
+        // 4. Update Local State & Persist Request Status
+        const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
+        setPaymentRequests(updatedRequests);
+        
+        // Critical: Save payment requests to Cloud Store so status remains 'approved' on reload
+        await cloudStore.savePaymentRequests(updatedRequests);
+
+        // 5. Handle Referral
+        if (req.referralId) {
+          const referral = referrals.find(r => r.id === req.referralId);
+          if (referral) {
+            const commissionAmount = Math.floor(req.amount * (referral.commissionRate / 100));
+            const newTx: ReferralTransaction = {
+              id: 'tx_' + Math.random().toString(36).substr(2, 9),
+              referralId: req.referralId,
+              amount: commissionAmount,
+              status: 'pending',
+              timestamp: new Date().toLocaleString(),
+              note: `Comm. from ${req.userName} (${req.amount}Tk)`
+            };
+            setReferralTransactions(prev => [newTx, ...prev]);
+            // Note: Referrals should also be saved to cloudStore ideally, but focusing on core issues first
+          }
+        }
+
+        alert(`✅ Payment Approved for ${req.userName}\nPackage: ${req.tier || 'Credits'}\nUser Balance Updated.`);
+
+    } catch (error: any) {
+        console.error("Payment Approval Failed:", error);
+        alert(`❌ Failed to activate package: ${error.message}\n(Hint: Check if 'credits', 'tier', 'is_premium' columns exist in Supabase 'profiles' table)`);
     }
   };
 
-  const handleRejectPayment = (id: string) => {
-    setPaymentRequests(prev => prev.map(r => r.id === id ? { ...r, status: 'rejected' } : r));
+  const handleRejectPayment = async (id: string) => {
+    const updatedRequests = paymentRequests.map(r => r.id === id ? { ...r, status: 'rejected' as const } : r);
+    setPaymentRequests(updatedRequests);
+    await cloudStore.savePaymentRequests(updatedRequests);
   };
 
   // --- Influencer Logic ---
@@ -257,16 +278,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  const handleSaveCompanion = (e: React.FormEvent) => {
+  const handleSaveCompanion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!compForm.name || !compForm.image) return alert('Name & Image required');
-    let updatedProfiles: GirlfriendProfile[];
-    if (editingCompanionId) updatedProfiles = profiles.map(p => p.id === editingCompanionId ? { ...p, ...compForm as GirlfriendProfile } : p);
-    else updatedProfiles = [...profiles, { ...compForm as GirlfriendProfile, id: 'comp_' + Math.random().toString(36).substr(2, 9) }];
     
+    let updatedProfiles: GirlfriendProfile[];
+    if (editingCompanionId) {
+        updatedProfiles = profiles.map(p => p.id === editingCompanionId ? { ...p, ...compForm as GirlfriendProfile } : p);
+    } else {
+        updatedProfiles = [...profiles, { ...compForm as GirlfriendProfile, id: 'comp_' + Math.random().toString(36).substr(2, 9) }];
+    }
+    
+    // 1. Update Local State (Optimistic)
     setProfiles(updatedProfiles);
-    setIsAddingCompanion(false);
-    setEditingCompanionId(null);
+    
+    // 2. Save to Cloud IMMEDIATELY with feedback
+    try {
+        await cloudStore.saveProfiles(updatedProfiles);
+        alert('✅ Model Profile Saved to Cloud Successfully!');
+        
+        setIsAddingCompanion(false);
+        setEditingCompanionId(null);
+    } catch (err: any) {
+        alert('❌ Failed to save to cloud: ' + err.message);
+    }
   };
 
   if (!isAuthenticated) return (

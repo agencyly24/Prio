@@ -147,9 +147,17 @@ class GeminiService {
    * Admin: Generate title and tease for exclusive content
    */
   public async generateExclusiveContentMetadata(context: string): Promise<{ title: string; tease: string }> {
-    const prompt = `Generate a seductive title and a teasing description (tease) for an exclusive photo/video content based on this context: "${context}".
-    Language: Bengali (Bangla).
-    The tease should be short, provocative, and encourage unlocking.`;
+    // UPDATED PROMPT: Explicitly asking for Bengali and Seductive content
+    const prompt = `Generate a highly seductive, attractive, and click-bait style title and a teasing short description (tease) for an exclusive photo/video content.
+    Context: "${context}".
+    
+    IMPORTANT RULES:
+    1. Language: MUST BE BENGALI (Bangla Script).
+    2. Tone: Romantic, Flirty, Hot, Seductive, Manipulative (to make user unlock).
+    3. Title Example: "আমার গোপন ভিডিও...", "লুকানো ছবি..."
+    4. Tease Example: "ভেবেছিলাম কাউকে দেখাবো না, কিন্তু তোমাকে না দেখিয়ে পারলাম না। আনলক করো..."
+    
+    Return JSON.`;
 
     const response = await this.ai.models.generateContent({
       model: 'gemini-3-flash-preview',
@@ -167,7 +175,7 @@ class GeminiService {
     });
 
     const text = response.text;
-    if (!text) return { title: "Exclusive", tease: "Unlock to see more..." };
+    if (!text) return { title: "গোপন ছবি", tease: "দেখতে হলে আনলক করো..." };
     return JSON.parse(text);
   }
 }
