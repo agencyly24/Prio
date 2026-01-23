@@ -13,21 +13,23 @@ import { SubscriptionPlans } from './components/SubscriptionPlans';
 import { CreditPurchaseModal } from './components/CreditPurchaseModal';
 import { AdminPanel } from './components/AdminPanel';
 import { cloudStore } from './services/cloudStore';
-import { supabase } from './services/supabase'; // Import supabase
+import { auth, db } from './services/firebase';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
+import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 
 const DEFAULT_USER: UserProfile = {
   id: 'guest',
   name: '',
-  email: '', // Ensure email is initialized as an empty string
+  email: '',
   avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
   bio: 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
   level: 1, xp: 0, joinedDate: new Date().toLocaleDateString(),
   tier: 'Free', isPremium: false, isVIP: false, isAdmin: false,
+  approved: false, role: 'user', purchased: false,
   credits: 5, unlockedContentIds: [],
   stats: { messagesSent: 0, hoursChatted: 0, companionsMet: 0 }
 };
 
-// Helper to prevent crash on bad JSON - MOVED OUTSIDE COMPONENT
 const safeJsonParse = <T,>(key: string, fallback: T): T => {
   try {
     const item = localStorage.getItem(key);
@@ -40,12 +42,10 @@ const safeJsonParse = <T,>(key: string, fallback: T): T => {
 
 const App: React.FC = () => {
   const [view, setView] = useState<View>(() => {
-    // Attempt to load view from localStorage, fallback to 'landing'
     return (localStorage.getItem('priyo_current_view') as View) || 'landing';
   });
   
   const [profiles, setProfiles] = useState<GirlfriendProfile[]>(() => {
-    // Attempt to load profiles from localStorage, fallback to INITIAL_PROFILES
     return safeJsonParse('priyo_dynamic_profiles', INITIAL_PROFILES);
   });
 
@@ -59,7 +59,7 @@ const App: React.FC = () => {
     return savedProfiles.find((p: GirlfriendProfile) => p.id === savedId) || null;
   });
 
-  const [activeCategory, setActiveCategory] = useState('All'); // Added activeCategory state
+  const [activeCategory, setActiveCategory] = useState('All');
   
   const [isLoggedIn, setIsLoggedIn] = useState(() => localStorage.getItem('priyo_is_logged_in') === 'true');
   const [hasConfirmedAge, setHasConfirmedAge] = useState(() => localStorage.getItem('priyo_age_confirmed') === 'true');
@@ -69,7 +69,6 @@ const App: React.FC = () => {
   const [tempNameInput, setTempNameInput] = useState(''); 
 
   const [userProfile, setUserProfile] = useState<UserProfile>(() => {
-    // Load initial user profile from localStorage or use default
     return safeJsonParse('priyo_user_profile', DEFAULT_USER);
   });
 
@@ -88,42 +87,52 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(() => localStorage.getItem('priyo_voice_enabled') !== 'false');
 
-  // Supabase Auth Listener & Cloud Data Loading
+  // Firebase Auth Listener
   useEffect(() => {
-    if (!supabase) {
-      console.error("Supabase client not initialized.");
+    if (!auth) {
+      console.error("Firebase Auth not initialized.");
       return;
     }
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setIsLoadingCloud(true);
-      if (session?.user) {
-        const isAdminUser = session.user.email === 'admin@priyo.com';
+      if (user) {
+        const isAdminUser = user.email === 'admin@priyo.com';
 
-        // 1. Fetch Latest Profile Data from Supabase 'profiles' table
+        // 1. Fetch Latest Profile Data from Firestore 'users' collection
         try {
-          const { data: profileData, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', session.user.id)
-            .single();
+          const docRef = doc(db, 'users', user.uid);
+          const docSnap = await getDoc(docRef);
 
           let currentUser: UserProfile;
 
-          if (profileData && !error) {
+          if (docSnap.exists()) {
+             const profileData = docSnap.data();
+             
+             // Convert Firestore Timestamp to Date string if present, else use current date
+             const joinedDate = profileData.createdAt?.toDate ? profileData.createdAt.toDate().toLocaleDateString() : new Date().toLocaleDateString();
+
              currentUser = { 
-               id: session.user.id, 
-               name: profileData.name || session.user.user_metadata?.name || '',
-               email: session.user.email || '',
-               avatar: profileData.avatar || session.user.user_metadata?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + (profileData.name || 'User'),
+               id: user.uid, 
+               // Map Firestore 'displayName' to app 'name'
+               name: profileData.displayName || profileData.name || user.displayName || '',
+               email: profileData.email || user.email || '',
+               // Map Firestore 'photoURL' to app 'avatar'
+               avatar: profileData.photoURL || profileData.avatar || user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + user.uid,
                bio: profileData.bio || 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
                level: profileData.level || 1, 
                xp: profileData.xp || 0, 
-               joinedDate: profileData.created_at ? new Date(profileData.created_at).toLocaleDateString() : new Date().toLocaleDateString(),
+               joinedDate: joinedDate,
                tier: profileData.tier || 'Free',
                isPremium: profileData.is_premium || false,
                isVIP: profileData.is_vip || false,
-               isAdmin: profileData.is_admin || isAdminUser,
+               
+               // Role & Approval & Purchased
+               isAdmin: profileData.role === 'admin' || profileData.is_admin || isAdminUser,
+               role: profileData.role || (isAdminUser ? 'admin' : 'user'),
+               approved: profileData.approved === true,
+               purchased: profileData.purchased === true,
+
                credits: profileData.credits || 0,
                unlockedContentIds: profileData.unlocked_content_ids || [],
                subscriptionExpiry: profileData.subscription_expiry,
@@ -133,39 +142,68 @@ const App: React.FC = () => {
                  companionsMet: profileData.companions_met || 0
                }
              };
-             if (profileData.name) localStorage.setItem('priyo_user_name', profileData.name);
-          } else if (error && error.code === 'PGRST116') { // No rows found
-            console.log("No profile found for this user, creating default.");
-            // Create a default profile if not exists (should be handled on signup, but as fallback)
+             if (profileData.displayName) localStorage.setItem('priyo_user_name', profileData.displayName);
+          } else {
+            console.log("Creating new user in Firestore with specific schema.");
+            const now = new Date();
+            
+            // App state object
             currentUser = {
-              id: session.user.id,
-              name: session.user.user_metadata?.name || '',
-              email: session.user.email || '',
-              avatar: session.user.user_metadata?.avatar_url || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + (session.user.user_metadata?.name || 'User'),
+              id: user.uid,
+              name: user.displayName || '',
+              email: user.email || '',
+              avatar: user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + user.uid,
               bio: 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
-              level: 1, xp: 0, joinedDate: new Date().toLocaleDateString(),
-              tier: 'Free', isPremium: false, isVIP: false, isAdmin: isAdminUser,
+              level: 1, xp: 0, joinedDate: now.toLocaleDateString(),
+              tier: 'Free', isPremium: false, isVIP: false, 
+              
+              isAdmin: isAdminUser,
+              role: isAdminUser ? 'admin' : 'user',
+              approved: isAdminUser, // Admin auto-approved
+              purchased: false,
+
               credits: 5, unlockedContentIds: [],
               stats: { messagesSent: 0, hoursChatted: 0, companionsMet: 0 }
             };
-            const { error: insertError } = await supabase.from('profiles').insert([currentUser]);
-            if (insertError) console.error("Fallback profile insert error:", insertError);
-          } else if (error) {
-            console.error("Error fetching user profile:", error);
-            currentUser = DEFAULT_USER; // Fallback to default user
-          } else {
-            currentUser = DEFAULT_USER; // Fallback in case of unexpected path
+
+            // Firestore Document Structure as requested
+            const firestoreData = {
+                uid: user.uid,
+                email: user.email,
+                displayName: user.displayName || '',
+                photoURL: user.photoURL || currentUser.avatar,
+                role: currentUser.role,
+                approved: currentUser.approved,
+                purchased: currentUser.purchased,
+                createdAt: serverTimestamp(),
+                
+                // Additional fields for App Functionality
+                bio: currentUser.bio,
+                level: currentUser.level,
+                xp: currentUser.xp,
+                tier: currentUser.tier,
+                is_premium: currentUser.isPremium,
+                is_vip: currentUser.isVIP,
+                is_admin: currentUser.isAdmin,
+                credits: currentUser.credits,
+                unlocked_content_ids: currentUser.unlockedContentIds,
+                messages_sent: currentUser.stats.messagesSent,
+                hours_chatted: currentUser.stats.hoursChatted,
+                companions_met: currentUser.stats.companionsMet
+            };
+
+            // Save new user to Firestore
+            await setDoc(docRef, firestoreData);
           }
           
           setUserProfile(currentUser);
           setIsLoggedIn(true);
 
-          // Determine navigation after user profile is fully loaded
           if (currentUser.isAdmin) {
-            setView('profile-selection'); // Admin goes directly to selection view
+            setView('profile-selection');
           } else if (!currentUser.name) {
              setShowNameModal(true);
-             setView('profile-selection'); // Show name modal over profile selection
+             setView('profile-selection');
           } else if (!hasConfirmedAge) {
              setView('age-verification');
           } else {
@@ -179,44 +217,33 @@ const App: React.FC = () => {
           setView('landing');
         }
 
-        // 2. Load Cloud Data (Profiles & Payment Requests from Supabase app_data)
+        // 2. Load Cloud Data
         const cloudProfiles = await cloudStore.loadProfiles();
-        if (cloudProfiles && cloudProfiles.length > 0) {
-          setProfiles(cloudProfiles);
-        }
+        if (cloudProfiles && cloudProfiles.length > 0) setProfiles(cloudProfiles);
 
         const cloudRequests = await cloudStore.loadPaymentRequests();
-        if (cloudRequests) {
-           setPaymentRequests(cloudRequests);
-        }
+        if (cloudRequests) setPaymentRequests(cloudRequests);
 
-        // 3. Load Referral Data
         const cloudReferrals = await cloudStore.loadReferrals();
-        if (cloudReferrals) {
-          setReferrals(cloudReferrals);
-        }
+        if (cloudReferrals) setReferrals(cloudReferrals);
 
         const cloudReferralTransactions = await cloudStore.loadReferralTransactions();
-        if (cloudReferralTransactions) {
-          setReferralTransactions(cloudReferralTransactions);
-        }
+        if (cloudReferralTransactions) setReferralTransactions(cloudReferralTransactions);
 
       } else { // No user session
         setIsLoggedIn(false);
         setUserProfile(DEFAULT_USER);
-        setView('landing'); // Always redirect to landing on logout
+        setView('landing');
       }
       setIsLoadingCloud(false);
     });
 
-    // Dependency array: `hasConfirmedAge` is valid because it affects navigation logic.
-    // `view` is removed to prevent unnecessary re-subscriptions and potential navigation loops.
-    return () => subscription.unsubscribe();
+    return () => unsubscribe();
   }, [hasConfirmedAge]); 
 
   // Local Storage Sync Effects
   useEffect(() => localStorage.setItem('priyo_user_profile', JSON.stringify(userProfile)), [userProfile]);
-  useEffect(() => localStorage.setItem('priyo_dynamic_profiles', JSON.stringify(profiles)), [profiles]); // Keep syncing local copy
+  useEffect(() => localStorage.setItem('priyo_dynamic_profiles', JSON.stringify(profiles)), [profiles]); 
   useEffect(() => localStorage.setItem('priyo_chat_histories', JSON.stringify(chatHistories)), [chatHistories]);
   useEffect(() => localStorage.setItem('priyo_payment_requests', JSON.stringify(paymentRequests)), [paymentRequests]);
   useEffect(() => localStorage.setItem('priyo_referrals', JSON.stringify(referrals)), [referrals]);
@@ -229,81 +256,69 @@ const App: React.FC = () => {
     if (selectedProfile) localStorage.setItem('priyo_selected_profile_id', selectedProfile.id);
   }, [selectedProfile]);
 
-
-  // Poll for User Updates (for general app syncing when admin panel is used by another admin, or data changes elsewhere)
+  // Poll for User Updates
   useEffect(() => {
-    if (!isLoggedIn || !userProfile.id) return;
+    if (!isLoggedIn || !userProfile.id || !db) return;
     const interval = setInterval(async () => {
-        if (!supabase) return;
-        
-        const { data: freshProfileData, error } = await supabase
-            .from('profiles')
-            .select('*')
-            .eq('id', userProfile.id)
-            .single();
+        try {
+            const docRef = doc(db, 'users', userProfile.id);
+            const docSnap = await getDoc(docRef);
 
-        if (freshProfileData && !error) {
-            // Check if essential profile data has changed
-            const isDifferent = 
-                freshProfileData.credits !== userProfile.credits || 
-                freshProfileData.tier !== userProfile.tier ||
-                freshProfileData.is_premium !== userProfile.isPremium ||
-                freshProfileData.is_vip !== userProfile.isVIP ||
-                freshProfileData.subscription_expiry !== userProfile.subscriptionExpiry ||
-                freshProfileData.name !== userProfile.name; // Also check name
-            
-            if (isDifferent) {
-                const updatedUser: UserProfile = {
-                    id: freshProfileData.id,
-                    name: freshProfileData.name,
-                    email: freshProfileData.email || '',
-                    avatar: freshProfileData.avatar,
-                    bio: freshProfileData.bio,
-                    level: freshProfileData.level,
-                    xp: freshProfileData.xp,
-                    joinedDate: freshProfileData.created_at ? new Date(freshProfileData.created_at).toLocaleDateString() : userProfile.joinedDate,
-                    tier: freshProfileData.tier,
-                    isPremium: freshProfileData.is_premium,
-                    isVIP: freshProfileData.is_vip,
-                    isAdmin: freshProfileData.is_admin,
-                    credits: freshProfileData.credits,
-                    unlockedContentIds: freshProfileData.unlocked_content_ids,
-                    subscriptionExpiry: freshProfileData.subscription_expiry,
-                    stats: {
-                        messagesSent: freshProfileData.messages_sent,
-                        hoursChatted: freshProfileData.hours_chatted,
-                        companionsMet: freshProfileData.companions_met
-                    }
-                };
-                setUserProfile(updatedUser);
+            if (docSnap.exists()) {
+                const freshProfileData = docSnap.data();
+                const freshName = freshProfileData.displayName || freshProfileData.name;
+                
+                const isDifferent = 
+                    freshProfileData.credits !== userProfile.credits || 
+                    freshProfileData.tier !== userProfile.tier ||
+                    freshProfileData.is_premium !== userProfile.isPremium ||
+                    freshProfileData.is_vip !== userProfile.isVIP ||
+                    freshProfileData.subscription_expiry !== userProfile.subscriptionExpiry ||
+                    freshName !== userProfile.name ||
+                    freshProfileData.approved !== userProfile.approved ||
+                    freshProfileData.purchased !== userProfile.purchased;
+                
+                if (isDifferent) {
+                    const updatedUser: UserProfile = {
+                        ...userProfile,
+                        name: freshName,
+                        email: freshProfileData.email || userProfile.email,
+                        avatar: freshProfileData.photoURL || freshProfileData.avatar || userProfile.avatar,
+                        tier: freshProfileData.tier,
+                        isPremium: freshProfileData.is_premium,
+                        isVIP: freshProfileData.is_vip,
+                        credits: freshProfileData.credits,
+                        unlockedContentIds: freshProfileData.unlocked_content_ids,
+                        subscriptionExpiry: freshProfileData.subscription_expiry,
+                        approved: freshProfileData.approved === true,
+                        purchased: freshProfileData.purchased === true,
+                        role: freshProfileData.role || 'user'
+                    };
+                    setUserProfile(updatedUser);
+                }
             }
-        } else if (error) {
+        } catch(error) {
             console.error("Polling user data error:", error);
         }
-
-        // Also Refresh Admin Data if Admin (Payment Requests, Referrals, Referral Transactions)
+        
+        // Admin data sync
         if (userProfile.isAdmin) {
-            const reqs = await cloudStore.loadPaymentRequests();
-            if (reqs) setPaymentRequests(reqs);
-
-            const refs = await cloudStore.loadReferrals();
-            if (refs) setReferrals(refs);
-
-            const refTxs = await cloudStore.loadReferralTransactions();
-            if (refTxs) setReferralTransactions(refTxs);
+             const reqs = await cloudStore.loadPaymentRequests();
+             if (reqs) setPaymentRequests(reqs);
+             const refs = await cloudStore.loadReferrals();
+             if (refs) setReferrals(refs);
+             const refTxs = await cloudStore.loadReferralTransactions();
+             if (refTxs) setReferralTransactions(refTxs);
         }
-    }, 2000); // Check every 2s
+    }, 3000); 
     return () => clearInterval(interval);
-}, [isLoggedIn, userProfile.id, userProfile.credits, userProfile.tier, userProfile.isPremium, userProfile.isVIP, userProfile.subscriptionExpiry, userProfile.name, userProfile.isAdmin]);
+}, [isLoggedIn, userProfile, db]);
 
 
   const handleStartClick = () => {
     if (!isLoggedIn) {
       setView('auth');
     } else {
-      // Logic handled by onAuthStateChange listener after login
-      // If already logged in, the listener should have set the view correctly
-      // We can just ensure we're not on 'landing'
       if (view === 'landing') {
         if (!userProfile.name) {
           setShowNameModal(true);
@@ -317,11 +332,8 @@ const App: React.FC = () => {
     }
   };
 
-  // Removed handleLoginSuccess as AuthScreen no longer uses it
-  // and onAuthStateChange is the source of truth for user state and navigation.
-
   const handleNameSubmit = async () => {
-    if (!supabase) return;
+    if (!db) return;
 
     const finalName = tempNameInput.trim();
     if (!finalName) {
@@ -333,13 +345,13 @@ const App: React.FC = () => {
     setUserProfile(updatedUser);
     localStorage.setItem('priyo_user_name', finalName);
     
-    // Update name in Supabase profiles
-    const { error } = await supabase
-      .from('profiles')
-      .update({ name: finalName })
-      .eq('id', userProfile.id);
-
-    if (error) console.error("Error updating user name:", error);
+    // Update name in Firestore (using displayName as preferred field)
+    try {
+       const userRef = doc(db, 'users', userProfile.id);
+       await updateDoc(userRef, { displayName: finalName, name: finalName });
+    } catch(error) {
+       console.error("Error updating user name:", error);
+    }
 
     setShowNameModal(false);
     setView(hasConfirmedAge ? 'profile-selection' : 'age-verification');
@@ -351,6 +363,11 @@ const App: React.FC = () => {
   };
 
   const handleProfileSelect = (profile: GirlfriendProfile) => {
+    if (!userProfile.approved && !userProfile.isAdmin) {
+      alert("আপনার অ্যাকাউন্টটি এখনো অ্যাপ্রুভ হয়নি। দয়া করে অপেক্ষা করুন।");
+      return;
+    }
+
     const currentPlan = SUBSCRIPTION_PLANS.find(p => p.id === userProfile.tier);
     const companionsChatted = Object.keys(chatHistories).length;
     const limit = currentPlan?.profileLimit || 0;
@@ -366,17 +383,16 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    if (!supabase) return;
-    await supabase.auth.signOut();
-    // Clearing localStorage on logout to ensure a fresh state for next login
+    if (!auth) return;
+    await signOut(auth);
     localStorage.clear(); 
     setIsLoggedIn(false);
     setHasConfirmedAge(false);
     setUserProfile(DEFAULT_USER);
     setSelectedProfile(null);
-    setProfiles(INITIAL_PROFILES); // Reset profiles to initial or fetch from cloud again if needed
+    setProfiles(INITIAL_PROFILES);
     setChatHistories({});
-    setView('landing'); // Go to landing page
+    setView('landing');
   };
 
   const handlePaymentSubmit = (request: Omit<PaymentRequest, 'id' | 'status' | 'timestamp' | 'userId' | 'userName'>) => {
@@ -388,10 +404,9 @@ const App: React.FC = () => {
       status: 'pending',
       timestamp: new Date().toLocaleString()
     };
-    // Update local state, which triggers localStorage save (and cloudStore if needed)
     const updatedRequests = [newRequest, ...paymentRequests];
     setPaymentRequests(updatedRequests);
-    cloudStore.savePaymentRequests(updatedRequests); // Save to Supabase app_data
+    cloudStore.savePaymentRequests(updatedRequests); 
   };
 
   const updateChatHistory = (profileId: string, messages: Message[]) => {
@@ -403,34 +418,33 @@ const App: React.FC = () => {
   };
 
   const handleUnlockContent = async (contentId: string, cost: number): Promise<boolean> => {
-    if (!supabase) return false;
+    if (!db) return false;
 
     if (userProfile.credits >= cost) {
       const newCredits = userProfile.credits - cost;
       const newUnlocked = [...userProfile.unlockedContentIds, contentId];
       
-      // Update credits in DB immediately
-      const { error } = await supabase
-        .from('profiles')
-        .update({ credits: newCredits, unlocked_content_ids: newUnlocked })
-        .eq('id', userProfile.id);
+      try {
+        const userRef = doc(db, 'users', userProfile.id);
+        await updateDoc(userRef, { 
+           credits: newCredits, 
+           unlocked_content_ids: newUnlocked 
+        });
 
-      if (error) {
+        const updatedUser = { ...userProfile, credits: newCredits, unlockedContentIds: newUnlocked };
+        setUserProfile(updatedUser);
+        return true;
+      } catch (error) {
         console.error("Error updating user credits/unlocked content:", error);
         alert("কন্টেন্ট আনলক করতে সমস্যা হয়েছে। আবার চেষ্টা করুন।");
         return false;
       }
-      
-      const updatedUser = { ...userProfile, credits: newCredits, unlockedContentIds: newUnlocked };
-      setUserProfile(updatedUser);
-      return true;
     }
     return false;
   };
 
   const filteredProfiles = profiles.filter(profile => {
     if (activeCategory === 'All') return true;
-    // Assuming PersonalityType strings match category names for filtering
     return profile.personality.toLowerCase().includes(activeCategory.toLowerCase());
   });
 
@@ -468,8 +482,7 @@ const App: React.FC = () => {
 
         {view === 'auth' && (
           <AuthScreen 
-            // onLoginSuccess is removed as per new auth flow
-            onBack={() => setView('landing')} // On back from auth, go to landing
+            onBack={() => setView('landing')} 
             onAdminClick={() => setView('admin-panel')} 
           />
         )}
@@ -490,6 +503,12 @@ const App: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center gap-4">
+                {/* Approval Status Banner */}
+                <div className={`hidden md:flex items-center gap-2 px-4 py-2 rounded-xl border ${userProfile.approved ? 'bg-green-500/10 border-green-500/20 text-green-500' : 'bg-yellow-500/10 border-yellow-500/20 text-yellow-500'}`}>
+                   <span className={`h-2 w-2 rounded-full ${userProfile.approved ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'}`}></span>
+                   <span className="text-[10px] font-black uppercase tracking-widest">{userProfile.approved ? 'Access Granted' : 'Approval Pending'}</span>
+                </div>
+
                 <div 
                   onClick={() => setShowCreditModal(true)} 
                   className="hidden sm:flex items-center gap-2 bg-slate-900/60 backdrop-blur-md border border-yellow-500/20 px-4 py-3 rounded-2xl cursor-pointer hover:border-yellow-500/50 transition-all shadow-lg"
@@ -505,14 +524,30 @@ const App: React.FC = () => {
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-yellow-500" viewBox="0 0 20 20" fill="currentColor"><path d="M5 2a1 1 0 011 1v1h1a1 1 0 010 2H6v1a1 1 0 01-2 0V6H3a1 1 0 010-2h1V3a1 1 0 011-1z" /></svg>
                   <span className="font-black text-sm uppercase tracking-widest">{userProfile.tier === 'Free' ? 'Upgrade' : userProfile.tier}</span>
                 </button>
-                {userProfile.isVIP && (
-                  <div className="bg-gradient-to-r from-yellow-600 to-amber-400 text-black px-4 py-2 rounded-xl font-black text-[10px] uppercase tracking-widest shadow-lg animate-pulse">VIP Member</div>
-                )}
               </div>
             </header>
+            
+            {/* Approval Notice */}
+            {!userProfile.approved && !userProfile.isAdmin && (
+              <div className="mb-10 p-6 bg-yellow-500/10 border border-yellow-500/30 rounded-3xl flex items-center gap-4 animate-in fade-in slide-in-from-top-4">
+                 <div className="h-12 w-12 bg-yellow-500/20 rounded-full flex items-center justify-center text-yellow-500">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                 </div>
+                 <div>
+                    <h3 className="text-xl font-black text-white mb-1">Your account is pending approval</h3>
+                    <p className="text-gray-400 text-sm">Welcome! An admin needs to approve your account before you can start chatting. Please wait.</p>
+                 </div>
+              </div>
+            )}
+            
+            {userProfile.approved && (
+              <div className="mb-8 px-2 animate-in fade-in">
+                 <p className="text-green-400 text-sm font-bold">Welcome, you have access!</p>
+              </div>
+            )}
 
             <div className="flex gap-3 overflow-x-auto pb-8 scrollbar-hide">
-              {['All', 'Sweet', 'Romantic', 'Flirty', 'Sexy', 'Horny', 'Wife'].map(category => ( // Hardcoded categories for now
+              {['All', 'Sweet', 'Romantic', 'Flirty', 'Sexy', 'Horny', 'Wife'].map(category => ( 
                 <button 
                   key={category}
                   onClick={() => setActiveCategory(category)}
@@ -527,7 +562,7 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
+            <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10 ${!userProfile.approved && !userProfile.isAdmin ? 'opacity-50 pointer-events-none grayscale' : ''}`}>
               {filteredProfiles.length > 0 ? (
                 filteredProfiles.map(profile => (
                   <ProfileCard key={profile.id} profile={profile} onSelect={handleProfileSelect} />
@@ -602,7 +637,7 @@ const App: React.FC = () => {
         {view === 'account' && (
           <UserAccount 
             userProfile={userProfile} 
-            setUserProfile={(u) => { setUserProfile(u); /* No direct cloudStore update here, App.tsx's useEffect will handle sync if userProfile.id exists */ }}
+            setUserProfile={(u) => { setUserProfile(u); }}
             onBack={() => setView('profile-selection')}
             chatHistories={chatHistories}
             profiles={profiles}

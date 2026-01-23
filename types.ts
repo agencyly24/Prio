@@ -96,6 +96,12 @@ export interface UserProfile {
   isPremium: boolean;
   isVIP: boolean;
   isAdmin: boolean;
+  
+  // New Authentication Fields
+  approved: boolean;
+  purchased: boolean; // New field as requested
+  role: 'user' | 'admin';
+
   subscriptionExpiry?: string; // ISO Date string for expiration tracking
   // New Wallet Fields
   credits: number; 
@@ -139,16 +145,3 @@ export interface CreditPackage {
 }
 
 export type View = 'landing' | 'auth' | 'age-verification' | 'profile-selection' | 'profile-detail' | 'chat' | 'account' | 'subscription' | 'admin-panel';
-
-// Declare window.aistudio as it's assumed to be pre-configured and accessible.
-// This is for TypeScript type safety.
-// REMOVED: According to coding guidelines, this is assumed to be globally available.
-// If it's globally available, declaring it here leads to duplicate identifier errors.
-// declare global {
-//   interface Window {
-//     aistudio: {
-//       hasSelectedApiKey: () => Promise<boolean>;
-//       openSelectKey: () => Promise<void>;
-//     };
-//   }
-// }

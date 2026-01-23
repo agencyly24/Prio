@@ -1,3 +1,4 @@
+
 {
   "name": "priyo-app",
   "private": true,
@@ -15,7 +16,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@google/genai": "*",
-    "@supabase/supabase-js": "^2.39.0"
+    "firebase": "^10.8.0"
   },
   "devDependencies": {
     "@types/react": "^19.0.0",

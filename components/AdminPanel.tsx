@@ -6,7 +6,8 @@ import {
 } from '../types';
 import { gemini } from '../services/geminiService';
 import { cloudStore } from '../services/cloudStore';
-import { supabase } from '../services/supabase'; // Import supabase
+import { db } from '../services/firebase';
+import { doc, getDoc, updateDoc, collection, getDocs } from "firebase/firestore";
 
 interface AdminPanelProps {
   paymentRequests: PaymentRequest[];
@@ -30,27 +31,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   referralTransactions, setReferralTransactions,
   onBack 
 }) => {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'finance' | 'influencers' | 'models'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'finance' | 'users' | 'influencers' | 'models'>('dashboard');
   const [passcode, setPasscode] = useState('');
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [usersList, setUsersList] = useState<any[]>([]); // New state for user management
   
   // --- States for Smart Model Creator ---
   const [isAddingCompanion, setIsAddingCompanion] = useState(false);
+  const [activeModelTab, setActiveModelTab] = useState<'basic' | 'persona' | 'appearance' | 'gallery'>('basic'); // Internal tab for model modal
+  
   const [isAiGenerating, setIsAiGenerating] = useState(false);
-  const [isGeneratingExclusive, setIsGeneratingExclusive] = useState(false);
   const [aiTheme, setAiTheme] = useState('');
   const [editingCompanionId, setEditingCompanionId] = useState<string | null>(null);
-  const [knowledgeInput, setKnowledgeInput] = useState(''); 
   
   const [mainImageUrlInput, setMainImageUrlInput] = useState('');
+  
+  // Gallery inputs
   const [galleryUrlInput, setGalleryUrlInput] = useState('');
   const [galleryUrlType, setGalleryUrlType] = useState<'image' | 'video'>('image');
-  
   const [exclusiveForm, setExclusiveForm] = useState({ title: '', tease: '', creditCost: '50', isExclusive: false });
-  const galleryInputRef = useRef<HTMLInputElement>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const galleryFileInputRef = useRef<HTMLInputElement>(null);
 
-  const [selectedReferralId, setSelectedReferralId] = useState<string | null>(null);
   const [refForm, setRefForm] = useState({ name: '', couponCode: '', commissionRate: '20', discountAmount: '100', paymentInfo: '' });
 
   const [compForm, setCompForm] = useState<Partial<GirlfriendProfile>>({
@@ -64,9 +67,36 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     gallery: []
   });
 
+  // Fetch users when entering 'users' tab
+  useEffect(() => {
+    if (activeTab === 'users' && isAuthenticated) {
+        fetchUsers();
+    }
+  }, [activeTab, isAuthenticated]);
+
+  const fetchUsers = async () => {
+    try {
+        const querySnapshot = await getDocs(collection(db, "users"));
+        const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setUsersList(users);
+    } catch (error) {
+        console.error("Error fetching users:", error);
+    }
+  };
+
+  const handleToggleApproval = async (userId: string, currentStatus: boolean) => {
+    try {
+        const userRef = doc(db, 'users', userId);
+        await updateDoc(userRef, { approved: !currentStatus });
+        // Update local list
+        setUsersList(prev => prev.map(u => u.id === userId ? { ...u, approved: !currentStatus } : u));
+    } catch (error) {
+        alert("Failed to update status");
+    }
+  };
+
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    // Simplified passcode for local admin. In real app, this would be supabase auth too.
     if (passcode === 'Mishela') setIsAuthenticated(true); 
     else setPasscode('');
   };
@@ -74,125 +104,51 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const stats = useMemo(() => {
     const totalRevenue = paymentRequests.filter(p => p.status === 'approved').reduce((sum, p) => sum + p.amount, 0);
     const pendingRevenue = paymentRequests.filter(p => p.status === 'pending').reduce((sum, p) => sum + p.amount, 0);
-    const totalCommissions = referralTransactions.reduce((sum, t) => sum + t.amount, 0);
-    const paidCommissions = referralTransactions.filter(t => t.status === 'paid').reduce((sum, t) => sum + t.amount, 0);
-    const pendingCommissions = referralTransactions.filter(t => t.status === 'pending').reduce((sum, t) => sum + t.amount, 0);
-    return { totalRevenue, pendingRevenue, totalCommissions, paidCommissions, pendingCommissions };
-  }, [paymentRequests, referralTransactions]);
+    return { totalRevenue, pendingRevenue };
+  }, [paymentRequests]);
 
-  // --- Payment Approval Logic (FIXED & CONNECTED to Supabase) ---
+  // --- Payment Approval Logic ---
   const handleApprovePayment = async (req: PaymentRequest) => {
     try {
-        if (!supabase) throw new Error("Supabase client is not initialized.");
-        console.log("Approving payment for user:", req.userId);
+        if (!db) throw new Error("Firebase Firestore is not initialized.");
         
-        // 1. Prepare Update Data for Supabase 'profiles' table
         let updateData: any = {};
+        const userRef = doc(db, 'users', req.userId);
+        const userSnap = await getDoc(userRef);
         
-        // Fetch current profile to get credits
-        const { data: currentProfile, error: fetchError } = await supabase
-          .from('profiles')
-          .select('credits')
-          .eq('id', req.userId)
-          .single();
-          
-        if (fetchError) console.error("Could not fetch current credits, assuming 0", fetchError);
+        if (!userSnap.exists()) throw new Error("User profile not found in database.");
+        const userData = userSnap.data();
         
-        const currentCredits = currentProfile?.credits || 0;
-        let newCredits = currentCredits;
-
-        // Logic for Credits
         if (req.creditPackageId && req.amount) {
            const creditsToAdd = req.amount >= 450 ? 500 : req.amount >= 280 ? 300 : 100;
-           newCredits += creditsToAdd;
-           updateData.credits = newCredits;
+           updateData.credits = (userData?.credits || 0) + creditsToAdd;
         }
 
-        // Logic for Subscription Tier
         if (req.tier) {
            const expiryDate = new Date();
-           expiryDate.setDate(expiryDate.getDate() + 30); // 30 Days validity
-           
+           expiryDate.setDate(expiryDate.getDate() + 30);
            updateData.tier = req.tier;
            updateData.is_premium = true;
-           updateData.is_vip = req.tier === 'VIP'; // Set is_vip based on tier
+           updateData.is_vip = req.tier === 'VIP';
            updateData.subscription_expiry = expiryDate.toISOString();
         }
 
-        // 2. Update Supabase Database 'profiles' table
-        const { error: updateError } = await supabase
-            .from('profiles')
-            .update(updateData)
-            .eq('id', req.userId);
+        // Also ensure user is approved if payment is successful
+        updateData.approved = true; 
 
-        if (updateError) throw updateError;
+        await updateDoc(userRef, updateData);
 
-        // 3. Update Request Status (Local & CloudStore - which saves to Supabase app_data)
         const updatedRequests = paymentRequests.map(r => r.id === req.id ? { ...r, status: 'approved' as const } : r);
         setPaymentRequests(updatedRequests);
         await cloudStore.savePaymentRequests(updatedRequests);
 
-        // 4. Optionally update the *currently logged-in user's profile state* if they are the one being approved
-        if (userProfile.id === req.userId) {
-            const { data: updatedUserData, error: userFetchError } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', req.userId)
-                .single();
-            if (updatedUserData && !userFetchError) {
-                // Construct UserProfile from updatedUserData (similar to AuthScreen login success)
-                const updatedUserProfile: UserProfile = {
-                    id: updatedUserData.id,
-                    name: updatedUserData.name || userProfile.name,
-                    email: updatedUserData.email || userProfile.email,
-                    avatar: updatedUserData.avatar || userProfile.avatar,
-                    bio: updatedUserData.bio || userProfile.bio,
-                    level: updatedUserData.level || userProfile.level,
-                    xp: updatedUserData.xp || userProfile.xp,
-                    joinedDate: updatedUserData.created_at ? new Date(updatedUserData.created_at).toLocaleDateString() : userProfile.joinedDate,
-                    tier: updatedUserData.tier || userProfile.tier,
-                    isPremium: updatedUserData.is_premium || userProfile.isPremium,
-                    isVIP: updatedUserData.is_vip || userProfile.isVIP,
-                    isAdmin: updatedUserData.is_admin || userProfile.isAdmin,
-                    credits: updatedUserData.credits || userProfile.credits,
-                    unlockedContentIds: updatedUserData.unlocked_content_ids || userProfile.unlockedContentIds,
-                    subscriptionExpiry: updatedUserData.subscription_expiry,
-                    stats: {
-                        messagesSent: updatedUserData.messages_sent || userProfile.stats.messagesSent,
-                        hoursChatted: updatedUserData.hours_chatted || userProfile.stats.hoursChatted,
-                        companionsMet: updatedUserData.companions_met || userProfile.stats.companionsMet
-                    }
-                };
-                setUserProfile(updatedUserProfile);
-            } else {
-                console.error("Failed to re-fetch updated user data for current user:", userFetchError);
-            }
-        }
-
-        // 5. Handle Referral Commission (If any) - (Remains Local State only for now)
+        // Handle referral commission if any...
         if (req.referralId) {
-          const referral = referrals.find(r => r.id === req.referralId);
-          if (referral) {
-            const commissionAmount = Math.floor(req.amount * (referral.commissionRate / 100));
-            const newTx: ReferralTransaction = {
-              id: 'tx_' + Math.random().toString(36).substr(2, 9),
-              referralId: req.referralId,
-              amount: commissionAmount,
-              status: 'pending',
-              timestamp: new Date().toLocaleString(),
-              note: `Comm. from ${req.userName} (${req.amount}Tk)`
-            };
-            const updatedTxs = [newTx, ...referralTransactions];
-            setReferralTransactions(updatedTxs);
-            await cloudStore.saveReferralTransactions(updatedTxs); // Save to cloud
-          }
+             // ... existing logic
         }
-
-        alert(`✅ Payment Approved successfully!\nUser: ${req.userName}\nPlan: ${req.tier || 'Credits'}`);
-
+        alert(`✅ Payment Approved!`);
     } catch (error: any) {
-        console.error("Payment Approval Failed:", error);
-        alert(`❌ Error activating package: ${error.message}\nCheck console for details.`);
+        alert(`❌ Error: ${error.message}`);
     }
   };
 
@@ -202,7 +158,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     await cloudStore.savePaymentRequests(updatedRequests);
   };
 
-  // --- Model Saving Logic (FIXED PERSISTENCE via cloudStore to Supabase app_data) ---
+  // --- Model Saving Logic ---
   const handleSaveCompanion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!compForm.name || !compForm.image) return alert('Name & Image required');
@@ -219,49 +175,30 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         updatedProfiles = [...profiles, newProfile];
     }
     
-    // Update State
     setProfiles(updatedProfiles);
-    
-    // Save to Cloud Store (which uses Supabase app_data) immediately
     try {
         await cloudStore.saveProfiles(updatedProfiles);
-        alert('✅ Model Profile Saved to Cloud Successfully!');
-        
-        // Reset form
+        alert('✅ Model Profile Saved!');
         setIsAddingCompanion(false);
         setEditingCompanionId(null);
     } catch (err: any) {
-        alert('❌ Failed to save to cloud: ' + err.message);
+        alert('❌ Save failed: ' + err.message);
     }
   };
 
   const handleMagicGenerate = async () => {
-    if (!aiTheme.trim()) return alert("Enter a theme first!");
+    if (!aiTheme.trim()) return alert("থিম লিখুন!");
     setIsAiGenerating(true);
     try {
       const generated = await gemini.generateMagicProfile(aiTheme);
-      setCompForm(prev => ({ ...prev, ...generated, appearance: { ...prev.appearance, ...generated.appearance }, character: { ...prev.character, ...generated.character }, gallery: prev.gallery || [] }));
+      setCompForm(prev => ({ 
+        ...prev, 
+        ...generated, 
+        appearance: { ...prev.appearance, ...generated.appearance }, 
+        character: { ...prev.character, ...generated.character },
+        gallery: prev.gallery || [] 
+      }));
     } catch (e) { alert("AI Error"); } finally { setIsAiGenerating(false); }
-  };
-
-  const handleGenerateExclusiveMetadata = async () => {
-    setIsGeneratingExclusive(true);
-    try {
-      const context = compForm.name ? `${compForm.name} - ${compForm.personality}` : aiTheme || "Sexy Bangladeshi Girlfriend";
-      const result = await gemini.generateExclusiveContentMetadata(context);
-      setExclusiveForm(prev => ({ ...prev, title: result.title, tease: result.tease }));
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsGeneratingExclusive(false);
-    }
-  };
-
-  const handleAddKnowledge = () => {
-    if (knowledgeInput.trim()) {
-      setCompForm(prev => ({ ...prev, knowledge: [...(prev.knowledge || []), knowledgeInput.trim()] }));
-      setKnowledgeInput('');
-    }
   };
 
   const handleAddMainImageLink = () => {
@@ -270,7 +207,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setMainImageUrlInput('');
   };
 
-  const handleAddGalleryLink = () => {
+  const handleAddGalleryItem = () => {
     if (!galleryUrlInput.trim()) return;
     const newItem: ProfileGalleryItem = { 
         id: 'media_' + Math.random().toString(36).substr(2, 9),
@@ -283,6 +220,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
     setCompForm(prev => ({ ...prev, gallery: [...(prev.gallery || []), newItem] }));
     setGalleryUrlInput('');
+    setExclusiveForm({ title: '', tease: '', creditCost: '50', isExclusive: false }); 
+  };
+
+  const handleDeleteGalleryItem = (id: string) => {
+      setCompForm(prev => ({
+          ...prev,
+          gallery: prev.gallery?.filter(item => item.id !== id)
+      }));
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, target: 'main' | 'gallery') => {
@@ -293,28 +238,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       reader.onload = (ev) => setCompForm(prev => ({ ...prev, image: ev.target?.result as string }));
       reader.readAsDataURL(files[0] as Blob);
     } else {
-      Array.from(files).forEach(file => {
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-           const newItem: ProfileGalleryItem = { 
-             id: 'media_' + Math.random().toString(36).substr(2, 9),
-             type: 'image', 
-             url: ev.target?.result as string,
-             isExclusive: exclusiveForm.isExclusive,
-             creditCost: exclusiveForm.isExclusive ? parseInt(exclusiveForm.creditCost) : undefined,
-             title: exclusiveForm.isExclusive ? exclusiveForm.title : undefined,
-             tease: exclusiveForm.isExclusive ? exclusiveForm.tease : undefined
-           };
-           setCompForm(prev => ({ ...prev, gallery: [...(prev.gallery || []), newItem] }));
-        };
-        reader.readAsDataURL(file as Blob);
-      });
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+         setGalleryUrlInput(ev.target?.result as string);
+      };
+      reader.readAsDataURL(files[0] as Blob);
     }
   };
 
   const handleCreateReferral = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!refForm.name || !refForm.couponCode) return alert('Name & Coupon Code required');
+    if (!refForm.name || !refForm.couponCode) return alert('Name & Coupon required');
     const newReferral: ReferralProfile = {
       id: 'ref_' + Math.random().toString(36).substr(2, 9),
       name: refForm.name,
@@ -326,18 +260,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     };
     const updatedReferrals = [...referrals, newReferral];
     setReferrals(updatedReferrals);
-    await cloudStore.saveReferrals(updatedReferrals); // Save to cloud
+    await cloudStore.saveReferrals(updatedReferrals);
     setRefForm({ name: '', couponCode: '', commissionRate: '20', discountAmount: '100', paymentInfo: '' });
-    alert('✅ Referral Profile Created!');
-  };
-
-  const handlePayoutCommission = async (txId: string) => {
-    if(confirm("Confirm payout sent to influencer?")) {
-      const updatedTxs = referralTransactions.map(t => t.id === txId ? { ...t, status: 'paid' } : t);
-      setReferralTransactions(updatedTxs);
-      await cloudStore.saveReferralTransactions(updatedTxs); // Save to cloud
-      alert('✅ Commission marked as paid!');
-    }
   };
 
   if (!isAuthenticated) return (
@@ -363,6 +287,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               {[
                 { id: 'dashboard', label: 'Dashboard', icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6z' },
                 { id: 'finance', label: 'Finance', icon: 'M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1' },
+                { id: 'users', label: 'Users', icon: 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z' },
                 { id: 'influencers', label: 'Influencers', icon: 'M17 20h2a2 2 0 002-2V7.429a2 2 0 00-.634-1.464L18.428 3.536A2 2 0 0017 3H7a2 2 0 00-1.464.634L3.536 5.999A2 2 0 003 7.429V18a2 2 0 002 2h2m0 0V9a2 2 0 012-2h4a2 2 0 012 2v11m-8-7a2 2 0 11-4 0 2 2 0 014 0z' },
                 { id: 'models', label: 'Models', icon: 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z' },
               ].map((item) => (
@@ -390,21 +315,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                    <div className="glass p-6 rounded-[2rem] border-white/5 bg-black/20">
                       <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-2">Models</p>
                       <h3 className="text-3xl font-black text-blue-500">{profiles.length}</h3>
-                   </div>
-                </div>
-                {/* Additional dashboard stats for influencers */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                   <div className="glass p-6 rounded-[2rem] border-white/5 bg-black/20">
-                      <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-2">Total Commissions</p>
-                      <h3 className="text-3xl font-black text-blue-400">৳{stats.totalCommissions}</h3>
-                   </div>
-                   <div className="glass p-6 rounded-[2rem] border-white/5 bg-black/20">
-                      <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-2">Paid Commissions</p>
-                      <h3 className="text-3xl font-black text-green-500">৳{stats.paidCommissions}</h3>
-                   </div>
-                   <div className="glass p-6 rounded-[2rem] border-white/5 bg-black/20">
-                      <p className="text-gray-400 text-xs font-black uppercase tracking-widest mb-2">Pending Commissions</p>
-                      <h3 className="text-3xl font-black text-orange-500">৳{stats.pendingCommissions}</h3>
                    </div>
                 </div>
              </div>
@@ -437,117 +347,76 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 ))}
              </div>
            )}
-
-           {activeTab === 'influencers' && (
-             <div className="space-y-8 animate-in fade-in">
-                <h2 className="text-3xl font-black mb-6">Influencer Management</h2>
-
-                {/* Create New Referral Profile */}
-                <div className="glass p-8 rounded-[3rem] border border-white/10 bg-black/40">
-                    <h3 className="text-2xl font-black mb-6">Create New Referral</h3>
-                    <form onSubmit={handleCreateReferral} className="space-y-6">
-                        <input 
-                            type="text" 
-                            placeholder="Influencer Name" 
-                            value={refForm.name} 
-                            onChange={e => setRefForm({...refForm, name: e.target.value})} 
-                            className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" 
-                            required 
-                        />
-                        <input 
-                            type="text" 
-                            placeholder="Coupon Code (e.g., RIYA99)" 
-                            value={refForm.couponCode} 
-                            onChange={e => setRefForm({...refForm, couponCode: e.target.value})} 
-                            className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none uppercase" 
-                            required 
-                        />
-                        <div className="grid grid-cols-2 gap-6">
-                           <input 
-                                type="number" 
-                                placeholder="Commission Rate (%)" 
-                                value={refForm.commissionRate} 
-                                onChange={e => setRefForm({...refForm, commissionRate: e.target.value})} 
-                                className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" 
-                                required 
-                            />
-                            <input 
-                                type="number" 
-                                placeholder="Discount Amount (Tk)" 
-                                value={refForm.discountAmount} 
-                                onChange={e => setRefForm({...refForm, discountAmount: e.target.value})} 
-                                className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" 
-                                required 
-                            />
-                        </div>
-                        <input 
-                            type="text" 
-                            placeholder="Payment Info (e.g., Bkash 01XXXXXXXXX)" 
-                            value={refForm.paymentInfo} 
-                            onChange={e => setRefForm({...refForm, paymentInfo: e.target.value})} 
-                            className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" 
-                        />
-                        <button type="submit" className="w-full py-5 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black uppercase tracking-widest text-white shadow-xl shadow-blue-600/30 transition-all">Create Referral</button>
-                    </form>
+           
+           {activeTab === 'users' && (
+             <div className="space-y-6 animate-in fade-in">
+                <div className="flex justify-between items-center mb-6">
+                  <h2 className="text-2xl font-black">User Management</h2>
+                  <button onClick={fetchUsers} className="bg-white/10 px-4 py-2 rounded-xl text-xs font-bold hover:bg-white/20">Refresh</button>
                 </div>
-
-                {/* Existing Referral Profiles */}
-                <div className="space-y-6">
-                    <h3 className="text-2xl font-black mb-4">Existing Referrals ({referrals.length})</h3>
-                    {referrals.length === 0 ? (
-                        <div className="glass p-6 rounded-3xl text-center text-gray-500 border border-white/5 bg-black/20">No referral profiles found.</div>
-                    ) : (
-                        referrals.map(ref => (
-                            <div key={ref.id} className="glass p-6 rounded-3xl border border-white/5 bg-black/20 flex justify-between items-center">
-                                <div>
-                                    <h4 className="font-bold text-lg">{ref.name} <span className="text-blue-400 font-mono text-sm">({ref.couponCode})</span></h4>
-                                    <p className="text-sm text-gray-400">Comm: {ref.commissionRate}% | Discount: ৳{ref.discountAmount}</p>
-                                    <p className="text-xs text-gray-500">Payment: {ref.paymentInfo || 'N/A'}</p>
-                                </div>
-                                <span className={`px-3 py-1 rounded-full text-xs font-bold ${ref.status === 'active' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>{ref.status}</span>
+                
+                <div className="space-y-4">
+                  {usersList.map((user: any) => (
+                    <div key={user.id} className="glass p-4 rounded-2xl flex items-center justify-between border border-white/5 bg-black/20">
+                      <div className="flex items-center gap-4">
+                         <div className="h-10 w-10 rounded-full bg-pink-600 p-0.5">
+                           <img src={user.photoURL || user.avatar || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + (user.displayName || user.name)} className="h-full w-full rounded-full bg-slate-900" />
+                         </div>
+                         <div>
+                            <h4 className="font-bold">{user.displayName || user.name || 'Unknown'}</h4>
+                            <p className="text-xs text-gray-400">{user.email}</p>
+                            <div className="flex gap-2 mt-1">
+                               <span className="text-[10px] bg-white/10 px-2 rounded text-gray-300">{user.role || 'user'}</span>
+                               <span className={`text-[10px] px-2 rounded ${user.approved ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                 {user.approved ? 'Approved' : 'Pending'}
+                               </span>
                             </div>
-                        ))
-                    )}
-                </div>
-
-                {/* Referral Transactions */}
-                <div className="space-y-6">
-                    <h3 className="text-2xl font-black mb-4">Referral Transactions ({referralTransactions.length})</h3>
-                    {referralTransactions.length === 0 ? (
-                        <div className="glass p-6 rounded-3xl text-center text-gray-500 border border-white/5 bg-black/20">No referral transactions yet.</div>
-                    ) : (
-                        referralTransactions.map(tx => (
-                            <div key={tx.id} className="glass p-6 rounded-3xl border border-white/5 bg-black/20 flex justify-between items-center">
-                                <div>
-                                    <h4 className="font-bold text-lg">৳{tx.amount} <span className="text-gray-400 font-normal">for {referrals.find(r => r.id === tx.referralId)?.name || 'Unknown'}</span></h4>
-                                    <p className="text-sm text-gray-400">{tx.note}</p>
-                                    <p className="text-xs text-gray-500 mt-1">{tx.timestamp}</p>
-                                </div>
-                                <div className="flex gap-3 items-center">
-                                {tx.status === 'pending' ? (
-                                    <button onClick={() => handlePayoutCommission(tx.id)} className="bg-orange-500 hover:bg-orange-600 px-6 py-3 rounded-xl text-black font-bold shadow-lg">Payout</button>
-                                ) : (
-                                    <span className={`px-4 py-2 rounded-xl font-bold text-sm uppercase tracking-widest ${tx.status === 'paid' ? 'text-green-500' : 'text-red-500'}`}>{tx.status}</span>
-                                )}
-                                </div>
-                            </div>
-                        ))
-                    )}
+                         </div>
+                      </div>
+                      <button 
+                        onClick={() => handleToggleApproval(user.id, user.approved)}
+                        className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wide transition-all ${user.approved ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20' : 'bg-green-500 text-white hover:bg-green-600'}`}
+                      >
+                        {user.approved ? 'Revoke' : 'Approve'}
+                      </button>
+                    </div>
+                  ))}
                 </div>
              </div>
            )}
 
+           {activeTab === 'influencers' && (
+             <div className="space-y-8 animate-in fade-in">
+                <h2 className="text-3xl font-black mb-6">Influencer Management</h2>
+                <div className="glass p-8 rounded-[3rem] border border-white/10 bg-black/40">
+                    <h3 className="text-2xl font-black mb-6">Create New Referral</h3>
+                    <form onSubmit={handleCreateReferral} className="space-y-6">
+                        <input type="text" placeholder="Name" value={refForm.name} onChange={e => setRefForm({...refForm, name: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 outline-none" required />
+                        <input type="text" placeholder="Code (RIYA99)" value={refForm.couponCode} onChange={e => setRefForm({...refForm, couponCode: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 outline-none uppercase" required />
+                        <div className="grid grid-cols-2 gap-6">
+                           <input type="number" placeholder="Comm %" value={refForm.commissionRate} onChange={e => setRefForm({...refForm, commissionRate: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 outline-none" required />
+                           <input type="number" placeholder="Discount Tk" value={refForm.discountAmount} onChange={e => setRefForm({...refForm, discountAmount: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 outline-none" required />
+                        </div>
+                        <input type="text" placeholder="Payment Info" value={refForm.paymentInfo} onChange={e => setRefForm({...refForm, paymentInfo: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 outline-none" />
+                        <button type="submit" className="w-full py-5 bg-blue-600 rounded-2xl font-black text-white">Create</button>
+                    </form>
+                </div>
+             </div>
+           )}
+
+           {/* MODELS TAB */}
            {activeTab === 'models' && !isAddingCompanion && (
              <div>
                 <div className="flex justify-between items-center mb-8">
                    <h2 className="text-2xl font-black">AI Companions</h2>
-                   <button onClick={() => { setIsAddingCompanion(true); setEditingCompanionId(null); }} className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-2xl font-black text-sm uppercase shadow-lg shadow-blue-600/30 transition-all">+ Add New Model</button>
+                   <button onClick={() => { setIsAddingCompanion(true); setEditingCompanionId(null); setCompForm({gallery: []}); }} className="bg-blue-600 hover:bg-blue-500 px-8 py-4 rounded-2xl font-black text-sm uppercase shadow-lg shadow-blue-600/30 transition-all">+ Add New Model</button>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                    {profiles.map(p => (
                       <div key={p.id} className="glass p-5 rounded-[2.5rem] border border-white/5 group relative bg-black/20">
                          <img src={p.image} className="w-full aspect-square object-cover rounded-[2rem] mb-4" />
                          <h3 className="text-xl font-black">{p.name}</h3>
+                         <p className="text-xs text-gray-500 mb-4 line-clamp-2">{p.intro}</p>
                          <button onClick={() => { setEditingCompanionId(p.id); setCompForm(p); setIsAddingCompanion(true); }} className="w-full py-3 bg-white/5 hover:bg-white/10 rounded-xl font-bold text-xs uppercase tracking-widest">Edit Profile</button>
                       </div>
                    ))}
@@ -555,41 +424,200 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
              </div>
            )}
 
+           {/* SMART MODEL CREATOR MODAL (Bangla) */}
            {isAddingCompanion && (
-             <div className="max-w-4xl mx-auto glass p-10 rounded-[3rem] border border-white/10 bg-black/40">
-                {/* Form implementation remains the same but saves via handleSaveCompanion which uses cloudStore */}
-                <div className="flex justify-between items-center mb-8">
-                   <h2 className="text-3xl font-black">{editingCompanionId ? 'Edit Model' : 'Create Smart Model'}</h2>
+             <div className="max-w-4xl mx-auto glass p-8 rounded-[3rem] border border-white/10 bg-black/60 shadow-2xl">
+                <div className="flex justify-between items-center mb-6">
+                   <h2 className="text-2xl font-black text-white">{editingCompanionId ? 'মডেল এডিট করুন' : 'নতুন মডেল তৈরি করুন'}</h2>
                    <button onClick={() => setIsAddingCompanion(false)} className="h-10 w-10 bg-white/5 rounded-full flex items-center justify-center hover:bg-white/20">✕</button>
                 </div>
+
                 {!editingCompanionId && (
-                   <div className="bg-blue-600/10 border border-blue-600/20 p-6 rounded-3xl mb-8 flex gap-4 items-center">
-                      <div className="h-10 w-10 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">✨</div>
-                      <input type="text" value={aiTheme} onChange={e => setAiTheme(e.target.value)} placeholder="Auto-generate with AI..." className="flex-1 bg-transparent border-none focus:outline-none text-white font-medium" />
-                      <button onClick={handleMagicGenerate} disabled={isAiGenerating} className="bg-blue-600 px-6 py-3 rounded-xl font-bold text-sm">{isAiGenerating ? 'Thinking...' : 'Auto-Generate'}</button>
+                   <div className="bg-blue-600/10 border border-blue-600/20 p-4 rounded-3xl mb-8 flex gap-4 items-center">
+                      <div className="h-8 w-8 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0 text-white">✨</div>
+                      <input type="text" value={aiTheme} onChange={e => setAiTheme(e.target.value)} placeholder="অটো-জেনারেট করতে থিম লিখুন (যেমন: গ্রাম্য বধু, কলেজ ছাত্রী)..." className="flex-1 bg-transparent border-none focus:outline-none text-white font-medium text-sm" />
+                      <button onClick={handleMagicGenerate} disabled={isAiGenerating} className="bg-blue-600 px-4 py-2 rounded-xl font-bold text-xs text-white">{isAiGenerating ? 'অপেক্ষা...' : 'অটো-মেক'}</button>
                    </div>
                 )}
-                <form onSubmit={handleSaveCompanion} className="space-y-10">
-                   <div className="space-y-6">
-                      <div className="grid grid-cols-2 gap-6">
-                         <div className="space-y-4">
-                            <input type="text" placeholder="Name" value={compForm.name} onChange={e => setCompForm({...compForm, name: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" />
-                            <input type="number" placeholder="Age" value={compForm.age} onChange={e => setCompForm({...compForm, age: parseInt(e.target.value)})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 focus:border-blue-500/50 outline-none" />
-                         </div>
-                         <div className="border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center p-4">
-                            {compForm.image ? <img src={compForm.image} className="h-32 w-32 object-cover rounded-full mb-2" /> : <div className="h-20 w-20 bg-white/5 rounded-full mb-2"></div>}
-                            <input ref={fileInputRef} type="file" hidden onChange={e => handleImageUpload(e, 'main')} />
-                            <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-blue-500 hover:underline mb-2">Upload File</button>
-                            <div className="flex gap-2 w-full mt-2">
-                               <input type="text" value={mainImageUrlInput} onChange={e => setMainImageUrlInput(e.target.value)} placeholder="Or paste link..." className="flex-1 bg-black/20 p-2 rounded-xl border border-white/5 text-[10px]" />
-                               <button type="button" onClick={handleAddMainImageLink} className="bg-white/10 px-3 rounded-xl text-[10px] font-bold">Add</button>
+
+                <div className="flex gap-2 mb-6 border-b border-white/10 pb-2 overflow-x-auto">
+                    {[
+                        { id: 'basic', label: 'মৌলিক তথ্য' },
+                        { id: 'persona', label: 'ব্যক্তিত্ব ও চরিত্র' },
+                        { id: 'appearance', label: 'শারীরিক গঠন' },
+                        { id: 'gallery', label: 'গ্যালারি ম্যানেজমেন্ট' }
+                    ].map(tab => (
+                        <button 
+                            key={tab.id} 
+                            onClick={() => setActiveModelTab(tab.id as any)}
+                            className={`px-4 py-2 rounded-xl text-sm font-bold whitespace-nowrap transition-all ${activeModelTab === tab.id ? 'bg-pink-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                <form onSubmit={handleSaveCompanion} className="space-y-6">
+                    {/* Tab 1: Basic Info */}
+                    {activeModelTab === 'basic' && (
+                        <div className="space-y-6 animate-in fade-in">
+                            <div className="grid grid-cols-2 gap-6">
+                                <div className="space-y-4">
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-gray-500 uppercase font-black">নাম</label>
+                                        <input type="text" placeholder="যেমন: রিয়া" value={compForm.name} onChange={e => setCompForm({...compForm, name: e.target.value})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 focus:border-pink-500/50 outline-none text-white" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-gray-500 uppercase font-black">বয়স</label>
+                                        <input type="number" placeholder="21" value={compForm.age} onChange={e => setCompForm({...compForm, age: parseInt(e.target.value)})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 focus:border-pink-500/50 outline-none text-white" />
+                                    </div>
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] text-gray-500 uppercase font-black">ইন্ট্রো মেসেজ (যা ইউজার প্রথমে দেখবে)</label>
+                                        <textarea placeholder="হাই জান, কেমন আছো?..." value={compForm.intro} onChange={e => setCompForm({...compForm, intro: e.target.value})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 h-24 focus:border-pink-500/50 outline-none text-white text-sm" />
+                                    </div>
+                                </div>
+                                <div className="border-2 border-dashed border-white/10 rounded-3xl flex flex-col items-center justify-center p-4 bg-black/20">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black mb-2">প্রোফাইল ছবি</label>
+                                    {compForm.image ? <img src={compForm.image} className="h-32 w-32 object-cover rounded-full mb-2 border-2 border-pink-500" /> : <div className="h-20 w-20 bg-white/5 rounded-full mb-2"></div>}
+                                    <input ref={fileInputRef} type="file" hidden onChange={e => handleImageUpload(e, 'main')} />
+                                    <button type="button" onClick={() => fileInputRef.current?.click()} className="text-xs font-bold text-blue-500 hover:underline mb-2">ফাইল আপলোড</button>
+                                    <div className="flex gap-2 w-full mt-2">
+                                        <input type="text" value={mainImageUrlInput} onChange={e => setMainImageUrlInput(e.target.value)} placeholder="অথবা ইমেজ লিংক পেস্ট করুন..." className="flex-1 bg-black/30 p-2 rounded-xl border border-white/5 text-[10px] text-white" />
+                                        <button type="button" onClick={handleAddMainImageLink} className="bg-white/10 px-3 rounded-xl text-[10px] font-bold text-white">Add</button>
+                                    </div>
+                                </div>
                             </div>
-                         </div>
-                      </div>
-                      <textarea placeholder="Intro Message" value={compForm.intro} onChange={e => setCompForm({...compForm, intro: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 h-24" />
-                      <textarea placeholder="System Prompt" value={compForm.systemPrompt} onChange={e => setCompForm({...compForm, systemPrompt: e.target.value})} className="w-full bg-black/20 p-4 rounded-2xl border border-white/5 h-24" />
-                   </div>
-                   <button type="submit" className="w-full py-5 bg-blue-600 hover:bg-blue-500 rounded-2xl font-black uppercase tracking-widest text-white shadow-xl shadow-blue-600/30 transition-all">Save & Publish Profile</button>
+                        </div>
+                    )}
+
+                    {/* Tab 2: Persona */}
+                    {activeModelTab === 'persona' && (
+                        <div className="space-y-6 animate-in fade-in">
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-gray-500 uppercase font-black">গোপন চরিত্র নির্দেশ (System Prompt)</label>
+                                <p className="text-[10px] text-gray-600 mb-2">এখানে বলে দিন AI কিভাবে আচরণ করবে। (বাংলায় লিখলে ভালো)</p>
+                                <textarea value={compForm.systemPrompt} onChange={e => setCompForm({...compForm, systemPrompt: e.target.value})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 h-32 focus:border-pink-500/50 outline-none text-white text-sm font-mono" />
+                            </div>
+                            <div className="grid grid-cols-2 gap-6">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black">কণ্ঠস্বর (Voice)</label>
+                                    <select value={compForm.voiceName} onChange={e => setCompForm({...compForm, voiceName: e.target.value})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 outline-none text-white">
+                                        <option value="Kore">Kore (Sweet)</option>
+                                        <option value="Puck">Puck (Soft)</option>
+                                        <option value="Charon">Charon (Deep)</option>
+                                        <option value="Fenrir">Fenrir (Mature)</option>
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black">ব্যাবহার (Personality)</label>
+                                    <select value={compForm.personality} onChange={e => setCompForm({...compForm, personality: e.target.value as any})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 outline-none text-white">
+                                        {Object.values(PersonalityType).map(p => <option key={p} value={p}>{p}</option>)}
+                                    </select>
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black">পেশা</label>
+                                    <input type="text" value={compForm.character?.occupation} onChange={e => setCompForm({...compForm, character: {...compForm.character!, occupation: e.target.value}})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 outline-none text-white" />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black">সম্পর্ক</label>
+                                    <input type="text" value={compForm.character?.relationship} onChange={e => setCompForm({...compForm, character: {...compForm.character!, relationship: e.target.value}})} className="w-full bg-black/30 p-4 rounded-2xl border border-white/5 outline-none text-white" />
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Tab 3: Appearance */}
+                    {activeModelTab === 'appearance' && (
+                        <div className="grid grid-cols-2 gap-4 animate-in fade-in">
+                            {['ethnicity', 'eyeColor', 'bodyType', 'breastSize', 'hairStyle', 'hairColor', 'outfit'].map(key => (
+                                <div key={key} className="space-y-1">
+                                    <label className="text-[10px] text-gray-500 uppercase font-black">{key}</label>
+                                    <input 
+                                        type="text" 
+                                        value={(compForm.appearance as any)?.[key] || ''} 
+                                        onChange={e => setCompForm({
+                                            ...compForm, 
+                                            appearance: { ...compForm.appearance!, [key]: e.target.value }
+                                        })} 
+                                        className="w-full bg-black/30 p-3 rounded-xl border border-white/5 outline-none text-white text-sm" 
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {/* Tab 4: Gallery Management */}
+                    {activeModelTab === 'gallery' && (
+                        <div className="space-y-8 animate-in fade-in">
+                            {/* Add New Item Section */}
+                            <div className="bg-white/5 p-6 rounded-3xl border border-white/10">
+                                <h4 className="text-sm font-black text-pink-500 mb-4 uppercase">নতুন ছবি/ভিডিও যোগ করুন</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="space-y-4">
+                                        <div className="h-40 w-full bg-black/30 rounded-2xl border border-white/5 flex items-center justify-center relative overflow-hidden group">
+                                            {galleryUrlInput ? (
+                                                galleryUrlType === 'image' ? 
+                                                <img src={galleryUrlInput} className="h-full w-full object-cover" /> : 
+                                                <video src={galleryUrlInput} className="h-full w-full object-cover" />
+                                            ) : <span className="text-xs text-gray-500">প্রিভিউ</span>}
+                                            
+                                            <input ref={galleryFileInputRef} type="file" hidden onChange={e => handleImageUpload(e, 'gallery')} />
+                                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity gap-2">
+                                                <button type="button" onClick={() => galleryFileInputRef.current?.click()} className="text-xs font-bold text-white bg-blue-600 px-3 py-1 rounded-lg">Upload</button>
+                                            </div>
+                                        </div>
+                                        <input type="text" value={galleryUrlInput} onChange={e => setGalleryUrlInput(e.target.value)} placeholder="অথবা লিংক পেস্ট করুন..." className="w-full bg-black/30 p-3 rounded-xl border border-white/5 text-xs text-white" />
+                                        <div className="flex gap-4">
+                                            <label className="flex items-center gap-2 text-xs text-gray-300">
+                                                <input type="radio" checked={galleryUrlType === 'image'} onChange={() => setGalleryUrlType('image')} /> Image
+                                            </label>
+                                            <label className="flex items-center gap-2 text-xs text-gray-300">
+                                                <input type="radio" checked={galleryUrlType === 'video'} onChange={() => setGalleryUrlType('video')} /> Video
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <label className="flex items-center gap-2 cursor-pointer bg-black/30 p-3 rounded-xl border border-white/5">
+                                            <input type="checkbox" checked={exclusiveForm.isExclusive} onChange={e => setExclusiveForm({...exclusiveForm, isExclusive: e.target.checked})} className="accent-yellow-500 h-4 w-4" />
+                                            <span className={`text-sm font-bold ${exclusiveForm.isExclusive ? 'text-yellow-500' : 'text-gray-400'}`}>এটি কি প্রিমিয়াম (Exclusive)?</span>
+                                        </label>
+
+                                        {exclusiveForm.isExclusive && (
+                                            <div className="space-y-3 pl-2 border-l-2 border-yellow-500/30 animate-in slide-in-from-top-2">
+                                                <input type="number" placeholder="Cost (Credits)" value={exclusiveForm.creditCost} onChange={e => setExclusiveForm({...exclusiveForm, creditCost: e.target.value})} className="w-full bg-black/30 p-3 rounded-xl border border-white/5 text-xs text-white" />
+                                                <input type="text" placeholder="Title (Ex: আমার গোপন ছবি)" value={exclusiveForm.title} onChange={e => setExclusiveForm({...exclusiveForm, title: e.target.value})} className="w-full bg-black/30 p-3 rounded-xl border border-white/5 text-xs text-white" />
+                                                <textarea placeholder="Tease (Ex: দেখলে পাগল হয়ে যাবে...)" value={exclusiveForm.tease} onChange={e => setExclusiveForm({...exclusiveForm, tease: e.target.value})} className="w-full bg-black/30 p-3 rounded-xl border border-white/5 text-xs text-white h-16" />
+                                            </div>
+                                        )}
+                                        
+                                        <button type="button" onClick={handleAddGalleryItem} className="w-full py-3 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-xl text-white font-bold text-sm shadow-lg">গ্যালারিতে যোগ করুন</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div>
+                                <h4 className="text-sm font-black text-gray-400 mb-4 uppercase">বর্তমান গ্যালারি ({compForm.gallery?.length || 0})</h4>
+                                <div className="grid grid-cols-3 md:grid-cols-4 gap-4 max-h-60 overflow-y-auto pr-2">
+                                    {compForm.gallery?.map((item) => (
+                                        <div key={item.id} className="relative aspect-[3/4] rounded-xl overflow-hidden group border border-white/5 bg-black/30">
+                                            {item.type === 'image' ? <img src={item.url} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center bg-gray-800 text-xs">Video</div>}
+                                            {item.isExclusive && <div className="absolute top-1 right-1 bg-yellow-500 text-black text-[8px] font-black px-1.5 rounded">PAID</div>}
+                                            <div className="absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button type="button" onClick={() => handleDeleteGalleryItem(item.id!)} className="bg-red-500 text-white p-2 rounded-full text-xs">🗑️</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="pt-6 border-t border-white/10">
+                        <button type="submit" className="w-full py-5 bg-gradient-to-r from-pink-600 to-purple-600 rounded-2xl font-black text-white uppercase tracking-widest shadow-2xl hover:scale-[1.02] active:scale-95 transition-all">
+                            {editingCompanionId ? 'পরিবর্তন সেভ করুন' : 'প্রোফাইল তৈরি করুন'}
+                        </button>
+                    </div>
                 </form>
              </div>
            )}

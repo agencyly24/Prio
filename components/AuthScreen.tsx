@@ -1,15 +1,14 @@
 
 import React, { useState } from 'react';
-import { supabase } from '../services/supabase'; // Import supabase
-import { UserProfile } from '../types';
+import { auth, googleProvider } from '../services/firebase';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signInWithPopup } from 'firebase/auth';
 
 interface AuthScreenProps {
-  // onLoginSuccess: (user: UserProfile) => void; // Removed this prop
   onBack: () => void;
   onAdminClick: () => void;
 }
 
-export const AuthScreen: React.FC<AuthScreenProps> = ({ onBack, onAdminClick }) => { // Removed onLoginSuccess from destructuring
+export const AuthScreen: React.FC<AuthScreenProps> = ({ onBack, onAdminClick }) => {
   const [isRegistering, setIsRegistering] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -18,54 +17,58 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onBack, onAdminClick }) 
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
 
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      if (!auth) throw new Error("Firebase auth is not initialized.");
+      await signInWithPopup(auth, googleProvider);
+      // User creation in Firestore is handled in App.tsx onAuthStateChanged listener to ensure consistency
+      onBack();
+    } catch (err: any) {
+      console.error("Google Auth Error:", err);
+      setError("গুগল লগিন ব্যর্থ হয়েছে। আবার চেষ্টা করুন।");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
     try {
-      if (!supabase) throw new Error("Supabase client is not initialized.");
+      if (!auth) throw new Error("Firebase auth is not initialized.");
 
       if (isRegistering) {
         if (!name) throw new Error("দয়া করে আপনার নাম লিখুন।");
         
-        // 1. Supabase Signup
-        const { error: authError } = await supabase.auth.signUp({
-          email,
-          password,
-          options: {
-            data: {
-              name: name, // Pass name to user_metadata
-              is_admin: email === 'admin@priyo.com' // Pass admin status to user_metadata
-            }
-          }
-        });
+        // 1. Firebase Signup
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
 
-        if (authError) throw authError;
-        
-        // No direct `onLoginSuccess` call here. Supabase listener in App.tsx will pick it up.
-        // For fresh signup, ensure profile entry exists. The `onAuthStateChange` listener in App.tsx has fallback logic.
-        // It's better to just navigate back and let App.tsx handle the full profile load
+        // 2. Update Display Name
+        await updateProfile(user, { displayName: name });
+
+        // Firestore creation handled in App.tsx
+
+        // Auth listener in App.tsx will handle navigation
         onBack();
 
       } else {
-        // Supabase Sign In
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
-        if (error) throw error;
-        
-        // No direct `onLoginSuccess` call here. Supabase listener in App.tsx will pick it up.
+        // Firebase Sign In
+        await signInWithEmailAndPassword(auth, email, password);
+        // Auth listener in App.tsx will handle navigation
         onBack();
       }
     } catch (err: any) {
       console.error("Auth Error:", err);
       let msg = "লগিন ব্যর্থ হয়েছে।";
-      if (err.message === 'Invalid login credentials') msg = "ইমেইল বা পাসওয়ার্ড ভুল।";
-      else if (err.message.includes('already registered')) msg = "এই ইমেইলটি ইতিমধ্যেই ব্যবহার করা হয়েছে।";
-      else if (err.message.includes('weak password')) msg = "পাসওয়ার্ডটি অন্তত ৬ অক্ষরের হতে হবে।";
+      const errorCode = err.code;
+      if (errorCode === 'auth/invalid-credential' || errorCode === 'auth/wrong-password' || errorCode === 'auth/user-not-found') msg = "ইমেইল বা পাসওয়ার্ড ভুল।";
+      else if (errorCode === 'auth/email-already-in-use') msg = "এই ইমেইলটি ইতিমধ্যেই ব্যবহার করা হয়েছে।";
+      else if (errorCode === 'auth/weak-password') msg = "পাসওয়ার্ডটি অন্তত ৬ অক্ষরের হতে হবে।";
       else msg = err.message || "সমস্যা হচ্ছে, আবার চেষ্টা করুন।";
       
       setError(msg);
@@ -133,6 +136,29 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({ onBack, onAdminClick }) 
               {loading ? <div className="h-5 w-5 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto"></div> : (isRegistering ? 'সাইন আপ করুন' : 'লগিন করুন')}
             </button>
           </form>
+
+          <div className="relative">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+            <div className="relative flex justify-center text-xs uppercase">
+              <span className="bg-[#0f0518] px-2 text-gray-500 font-bold">Or continue with</span>
+            </div>
+          </div>
+
+          <button 
+            onClick={handleGoogleLogin}
+            disabled={loading}
+            className="w-full py-4 bg-white text-black hover:bg-gray-100 rounded-2xl font-black text-base shadow-xl transition-all active:scale-95 flex items-center justify-center gap-3"
+          >
+             <svg className="w-5 h-5" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+                <path fill="#EA4335" d="M12 4.61c1.61 0 3.09.56 4.23 1.64l3.18-3.18C17.46 1.05 14.97 0 12 0 7.7 0 3.99 2.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+             </svg>
+             Continue with Google
+          </button>
           
           {error && <p className="text-red-400 text-xs font-bold text-center bg-red-500/10 py-2 rounded-lg">{error}</p>}
           
