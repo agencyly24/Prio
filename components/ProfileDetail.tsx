@@ -8,9 +8,10 @@ interface ProfileDetailProps {
   userProfile: UserProfile;
   onBack: () => void;
   onStartChat: () => void;
+  onUnlockModel: (modelId: string) => Promise<boolean>; // New Prop
   onUnlockContent: (contentId: string, cost: number) => boolean;
   onPurchaseCredits: (show: boolean) => void;
-  onShowSubscription: () => void; // New Prop for redirecting to subscription
+  onShowSubscription: () => void;
 }
 
 export const ProfileDetail: React.FC<ProfileDetailProps> = ({ 
@@ -18,22 +19,46 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
   userProfile, 
   onBack, 
   onStartChat,
+  onUnlockModel,
   onUnlockContent,
   onPurchaseCredits,
   onShowSubscription
 }) => {
-  // Default active tab set to 'appearance' as requested
   const [activeTab, setActiveTab] = useState<'appearance' | 'gallery'>('appearance');
   const [selectedLightboxMedia, setSelectedLightboxMedia] = useState<ProfileGalleryItem | null>(null);
   const [unlockingId, setUnlockingId] = useState<string | null>(null);
+  const [isUnlockingModel, setIsUnlockingModel] = useState(false);
   
   // Image Slider State
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
 
-  // Combine main image and gallery images for the slider (Only unlocked public images)
+  // Check if this model is already in user's unlocked list
+  const isModelUnlocked = (userProfile.unlockedModels || []).includes(profile.id);
+
+  // Safe access to nested objects
+  const appearance = profile.appearance || {
+    ethnicity: 'N/A',
+    eyeColor: 'N/A',
+    bodyType: 'N/A',
+    breastSize: 'N/A',
+    hairStyle: 'N/A',
+    hairColor: 'N/A',
+    outfit: 'N/A'
+  };
+
+  const character = profile.character || {
+    relationship: 'N/A',
+    occupation: 'N/A',
+    kinks: []
+  };
+
+  // Safe gallery access
+  const gallery = profile.gallery || [];
+
+  // Combine main image and gallery images for the slider
   const sliderImages = [
     { type: 'image', url: profile.image, id: 'main' }, 
-    ...profile.gallery.filter(item => item.type === 'image' && !item.isExclusive) 
+    ...gallery.filter(item => item.type === 'image' && !item.isExclusive) 
   ];
 
   // Reset slider when profile changes
@@ -52,7 +77,8 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
   };
 
   const handleContentClick = (item: ProfileGalleryItem) => {
-    if (!item.isExclusive || (item.id && userProfile.unlockedContentIds.includes(item.id))) {
+    const safeContentIds = userProfile.unlockedContentIds || [];
+    if (!item.isExclusive || (item.id && safeContentIds.includes(item.id))) {
       setSelectedLightboxMedia(item);
     } else {
       setUnlockingId(item.id || null);
@@ -69,28 +95,33 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
     }
   };
 
-  // Logic to handle Chat Start with Gatekeeping
-  const handleStartChatClick = () => {
-    if (userProfile.tier === 'Free') {
-      // Trigger Subscription Modal/Page if user is Free
-      // Removed confirm dialog for smoother UX - directs immediately to subscription page
-      onShowSubscription();
-    } else {
-      // Allow entry if Premium/VIP
-      onStartChat();
+  // UPDATED: Handle Chat Action (Unlock Logic)
+  const handleMainAction = async () => {
+    if (isModelUnlocked) {
+        onStartChat();
+        return;
     }
+
+    // Try to unlock
+    setIsUnlockingModel(true);
+    const success = await onUnlockModel(profile.id);
+    setIsUnlockingModel(false);
+
+    if (success) {
+        onStartChat();
+    }
+    // If fail, App.tsx handles the alert/redirect
   };
 
   const AttributeCard = ({ label, value }: { label: string, value: string }) => (
     <div className="bg-white/5 border border-white/5 p-5 rounded-3xl flex flex-col gap-1 hover:bg-white/10 transition-colors group shadow-lg">
       <span className="text-[10px] font-black text-pink-400 uppercase tracking-[0.2em] group-hover:text-pink-300 transition-colors">{label}</span>
-      <span className="text-base font-black text-white">{value}</span>
+      <span className="text-base font-black text-white">{value || 'N/A'}</span>
     </div>
   );
 
   return (
-    // Updated Background: Rich dark gradient to match global theme
-    <div className="min-h-screen bg-gradient-to-b from-slate-950 via-purple-950/20 to-slate-950 text-white p-4 md:p-10 animate-in fade-in duration-500 relative">
+    <div className="min-h-screen text-white p-4 md:p-10 animate-in fade-in duration-500 relative">
       {/* Lightbox Modal */}
       {selectedLightboxMedia && (
         <div 
@@ -108,7 +139,7 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
         </div>
       )}
 
-      {/* Unlock Confirmation Modal */}
+      {/* Unlock Exclusive Content Confirmation Modal */}
       {unlockingId && (
         <div className="fixed inset-0 z-[100] bg-slate-950/80 backdrop-blur-xl flex items-center justify-center p-4">
           <div className="max-w-sm w-full glass p-8 rounded-[2.5rem] border-white/10 text-center relative overflow-hidden bg-black/40">
@@ -121,7 +152,7 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                 </div>
                 
                 {(() => {
-                  const item = profile.gallery.find(g => g.id === unlockingId);
+                  const item = gallery.find(g => g.id === unlockingId);
                   if (!item) return null;
                   
                   const hasEnoughCredits = userProfile.credits >= (item.creditCost || 0);
@@ -182,44 +213,25 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
             <button onClick={onBack} className="self-start p-4 glass rounded-2xl hover:bg-white/10 transition-all border border-white/5"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" /></svg></button>
             
             <div className="relative rounded-[3rem] overflow-hidden border border-white/10 aspect-[3.5/5] group shadow-2xl shadow-purple-900/20">
-               {/* Main Image */}
+               {/* Main Image - ALWAYS CLEAR */}
                <img 
                  src={(sliderImages[currentImageIndex] as any)?.url || profile.image} 
-                 className="w-full h-full object-cover transition-opacity duration-500" 
+                 className="w-full h-full object-cover transition-all duration-500" 
                  alt={profile.name} 
                />
+               
+               {/* NO LOCK ICON OVERLAY */}
+
                <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-80 pointer-events-none"></div>
 
-               {/* Navigation Arrows (Only if multiple images exist) */}
+               {/* Navigation Arrows */}
                {sliderImages.length > 1 && (
                  <>
-                   {/* Prev Button */}
-                   <button 
-                     onClick={handlePrevImage}
-                     className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-black/30 backdrop-blur-md rounded-full border border-white/10 text-white hover:bg-pink-600 hover:border-pink-500 transition-all active:scale-90"
-                   >
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" />
-                     </svg>
-                   </button>
-
-                   {/* Next Button */}
-                   <button 
-                     onClick={handleNextImage}
-                     className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-black/30 backdrop-blur-md rounded-full border border-white/10 text-white hover:bg-pink-600 hover:border-pink-500 transition-all active:scale-90"
-                   >
-                     <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 5l7 7-7 7" />
-                     </svg>
-                   </button>
-                   
-                   {/* Indicator Dots */}
+                   <button onClick={handlePrevImage} className="absolute left-4 top-1/2 -translate-y-1/2 p-3 bg-black/30 backdrop-blur-md rounded-full border border-white/10 text-white hover:bg-pink-600 transition-all active:scale-90"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" /></svg></button>
+                   <button onClick={handleNextImage} className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-black/30 backdrop-blur-md rounded-full border border-white/10 text-white hover:bg-pink-600 transition-all active:scale-90"><svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 5l7 7-7 7" /></svg></button>
                    <div className="absolute bottom-6 left-0 right-0 flex justify-center gap-2 pointer-events-none">
                      {sliderImages.map((_, idx) => (
-                       <div 
-                         key={idx} 
-                         className={`h-1.5 rounded-full transition-all duration-300 ${idx === currentImageIndex ? 'w-6 bg-pink-500' : 'w-1.5 bg-white/50'}`} 
-                       />
+                       <div key={idx} className={`h-1.5 rounded-full transition-all duration-300 ${idx === currentImageIndex ? 'w-6 bg-pink-500' : 'w-1.5 bg-white/50'}`} />
                      ))}
                    </div>
                  </>
@@ -253,7 +265,6 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                </div>
             </div>
 
-            {/* Reordered Tabs: Appearance First */}
             <div className="flex bg-black/20 border border-white/5 rounded-3xl p-1.5 mb-8 backdrop-blur-sm">
               {['appearance', 'gallery'].map((tab) => (
                 <button 
@@ -269,30 +280,29 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
             </div>
 
             <div className="min-h-[400px]">
-               {/* Appearance Section (Now First) */}
                {activeTab === 'appearance' && (
                  <div className="grid grid-cols-2 gap-5 animate-in fade-in slide-in-from-right-4">
-                    <AttributeCard label="জাতীয়তা" value={profile.appearance.ethnicity} />
+                    <AttributeCard label="জাতীয়তা" value={appearance.ethnicity} />
                     <AttributeCard label="বয়স" value={`${profile.age} বছর`} />
-                    <AttributeCard label="শরীরের গঠন" value={profile.appearance.bodyType} />
-                    <AttributeCard label="চোখের রঙ" value={profile.appearance.eyeColor} />
-                    <AttributeCard label="ফিগার ডিটেইলস" value={profile.appearance.breastSize} />
-                    <AttributeCard label="চুলের স্টাইল" value={profile.appearance.hairStyle} />
-                    <AttributeCard label="পোশাক" value={profile.appearance.outfit} />
-                    <AttributeCard label="সম্পর্ক" value={profile.character.relationship} />
+                    <AttributeCard label="শরীরের গঠন" value={appearance.bodyType} />
+                    <AttributeCard label="চোখের রঙ" value={appearance.eyeColor} />
+                    <AttributeCard label="ফিগার ডিটেইলস" value={appearance.breastSize} />
+                    <AttributeCard label="চুলের স্টাইল" value={appearance.hairStyle} />
+                    <AttributeCard label="পোশাক" value={appearance.outfit} />
+                    <AttributeCard label="সম্পর্ক" value={character.relationship} />
                  </div>
                )}
 
-               {/* Gallery Section with Exclusive Content Logic */}
                {activeTab === 'gallery' && (
                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-5 animate-in fade-in slide-in-from-right-4">
-                    {profile.gallery.length === 0 ? (
+                    {gallery.length === 0 ? (
                        <div className="col-span-full py-20 text-center glass rounded-[2.5rem] border-white/5 bg-black/20">
                           <p className="text-gray-500 font-black uppercase tracking-widest">গ্যালারি খালি</p>
                        </div>
                     ) : (
-                      profile.gallery.map((item, idx) => {
-                        const isUnlocked = !item.isExclusive || (item.id && userProfile.unlockedContentIds.includes(item.id));
+                      gallery.map((item, idx) => {
+                        const safeContentIds = userProfile.unlockedContentIds || [];
+                        const isUnlocked = !item.isExclusive || (item.id && safeContentIds.includes(item.id));
                         
                         return (
                           <div 
@@ -300,7 +310,6 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                             onClick={() => handleContentClick(item)} 
                             className={`aspect-[3/4] rounded-[2rem] overflow-hidden border transition-all relative group cursor-pointer ${item.isExclusive && !isUnlocked ? 'border-yellow-500/30' : 'border-white/5 hover:border-pink-500/30 hover:scale-105'}`}
                           >
-                             {/* Exclusive Badge */}
                              {item.isExclusive && (
                                <div className="absolute top-3 left-3 z-20">
                                  {isUnlocked ? (
@@ -323,7 +332,6 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                                </div>
                              )}
 
-                             {/* Image Rendering Logic */}
                              {item.type === 'image' || (item.isExclusive && !isUnlocked) ? (
                                <img 
                                   src={item.url} 
@@ -336,7 +344,6 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                                </div>
                              )}
                             
-                            {/* Locked Overlay Content */}
                              {item.isExclusive && !isUnlocked && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-4 text-center">
                                    <div className="h-12 w-12 bg-white/10 rounded-full flex items-center justify-center backdrop-blur-md mb-3 border border-white/20 shadow-xl">
@@ -361,16 +368,25 @@ export const ProfileDetail: React.FC<ProfileDetailProps> = ({
                )}
             </div>
 
-            <button onClick={handleStartChatClick} className="w-full h-20 mt-12 bg-gradient-to-r from-pink-600 to-rose-500 rounded-[2rem] font-black text-xl uppercase tracking-widest shadow-2xl flex items-center justify-center gap-4 hover:scale-105 active:scale-95 transition-all shadow-pink-600/30">
-               {userProfile.tier === 'Free' ? (
-                 <>
-                   আনলিমিটেড চ্যাট শুরু করুন (Premium)
-                   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
-                 </>
-               ) : (
+            <button 
+              onClick={handleMainAction}
+              disabled={isUnlockingModel}
+              className={`w-full h-20 mt-12 rounded-[2rem] font-black text-xl uppercase tracking-widest shadow-2xl flex items-center justify-center gap-4 hover:scale-105 active:scale-95 transition-all 
+                ${isModelUnlocked 
+                    ? 'bg-gradient-to-r from-pink-600 to-rose-500 shadow-pink-600/30' 
+                    : 'bg-gradient-to-r from-gray-700 to-gray-800 shadow-black/40 border border-white/10'}`}
+            >
+               {isUnlockingModel ? (
+                   <span className="animate-pulse">আনলক হচ্ছে...</span>
+               ) : isModelUnlocked ? (
                  <>
                    আড্ডা শুরু করি
                    <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
+                 </>
+               ) : (
+                 <>
+                   <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-yellow-500" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                   <span>চ্যাট আনলক করুন</span>
                  </>
                )}
             </button>

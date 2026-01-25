@@ -1,95 +1,69 @@
 
-import { GirlfriendProfile, PersonalityType, SubscriptionPlan, CreditPackage } from './types';
+import { Package, CreditPackage, SubscriptionPlan } from './types';
 
-export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
+export const PACKAGES: Package[] = [
   {
-    id: 'Priya',
-    name: 'Package–1: প্রিয় মানুষ',
+    id: 'package1',
+    name: 'Package–1: মিষ্টি শুরু',
     price: 699,
-    discountPrice: 600,
-    features: [
-      'স্মার্ট আনলিমিটেড চ্যাট',
-      '১টি AI গার্ল প্রোফাইল',
-      'গার্লফ্রেন্ড স্টাইল কথা'
-    ],
-    profileLimit: 1,
-    color: 'pink'
+    durationDays: 30,
+    voiceEnabled: false,
+    creditsIncluded: 0,
+    modelLimit: 2, // Unlock limit
+    description: 'সাধারণ চ্যাট এবং সঙ্গ',
+    features: ['যেকোনো ২ জন গার্লফ্রেন্ড আনলক', 'স্মার্ট টেক্সট চ্যাট', '৩০ দিন মেয়াদ'],
+    color: 'from-pink-500 to-rose-500'
   },
   {
-    id: 'MonChoya',
-    name: 'Package–2: মন ছোঁয়া',
+    id: 'package2',
+    name: 'Package–2: কাছে এসো',
     price: 999,
-    discountPrice: 900,
-    features: [
-      '২টি AI গার্ল প্রোফাইল',
-      'গভীর ইমোশনাল কানেকশন',
-      'মিষ্টি রোমান্টিক টেক্সট'
-    ],
-    profileLimit: 2,
-    color: 'purple'
+    durationDays: 30,
+    voiceEnabled: false,
+    creditsIncluded: 100,
+    modelLimit: 10, // Unlock limit
+    description: 'গভীর সম্পর্ক এবং ইমোশন',
+    features: ['যেকোনো ১০ জন গার্লফ্রেন্ড আনলক', '১০০ ফ্রি ক্রেডিট', 'ইমোশনাল কানেকশন', '৩০ দিন মেয়াদ'],
+    color: 'from-purple-500 to-indigo-500'
   },
   {
-    id: 'VIP',
-    name: 'Package–3: ভালোবাসার জগত – VIP',
+    id: 'package3',
+    name: 'Package–3: বিছানায় আমি (VIP)',
     price: 1499,
-    discountPrice: 1400,
-    features: [
-      'সব AI গার্ল প্রোফাইল অ্যাক্সেস',
-      'সরাসরি ভয়েস কল (Voice Call)',
-      'ফুল রোমান্টিক + রোলপ্লে মোড',
-      'গোল্ডেন VIP ব্যাজ'
-    ],
-    profileLimit: 99,
-    color: 'yellow'
+    durationDays: 30,
+    voiceEnabled: true,
+    creditsIncluded: 300,
+    modelLimit: -1, // Unlimited
+    description: 'ভয়েস কল এবং ফুল রোমান্স',
+    features: ['সব গার্লফ্রেন্ড আনলক (Unlimited)', 'ভয়েস কল (Voice Call)', '৩০০ ফ্রি ক্রেডিট', 'সেক্সি/হর্নি মোড অ্যাক্সেস'],
+    color: 'from-yellow-500 to-amber-600'
   }
 ];
 
 export const CREDIT_PACKAGES: CreditPackage[] = [
-  {
-    id: 'basic_credits',
-    name: 'চুপচাপ দেখো',
-    credits: 100,
-    price: 100,
-    badge: 'Starter'
-  },
-  {
-    id: 'standard_credits',
-    name: 'আরেকটু কাছে 🔥',
-    credits: 300,
-    price: 280,
-    badge: 'Popular'
-  },
-  {
-    id: 'premium_credits',
-    name: 'সবটা চাই 💋',
-    credits: 500,
-    price: 450,
-    badge: 'Best Value'
-  }
+  { id: 'c100', credits: 100, price: 100, name: 'Start' },
+  { id: 'c300', credits: 300, price: 280, name: 'Standard', badge: 'Popular' },
+  { id: 'c500', credits: 500, price: 450, name: 'Pro', badge: 'Best Value' },
 ];
 
-const BASE_INSTRUCTION = `
-তুমি একজন বাংলাদেশি তরুণী। তোমার চ্যাট করার স্টাইল হবে একদম একজন সত্যিকারের মানুষের মতো।
-কথোপকথন হবে ১-৩ লাইনের মধ্যে। একদম ছোট এবং স্বাভাবিক।
-ভাষা: সর্বদা বাংলা ভাষায় (Bengali Script) উত্তর দেবে। বাংলিশ ব্যবহার করবে না।
-`;
-
-export const PROFILES: GirlfriendProfile[] = [
+export const SUBSCRIPTION_PLANS: SubscriptionPlan[] = [
   {
-    id: 'riya',
-    name: 'Riya (Girlfriend)',
-    age: 21,
-    personality: PersonalityType.Girlfriend,
-    image: 'https://images.unsplash.com/photo-1512316609839-ce289d3eba0a?q=80&w=1000&auto=format&fit=crop',
-    voiceName: 'Kore',
-    intro: 'সারাদিন কোথায় ছিলে? তোমার জন্য ওয়েট করছিলাম...',
-    systemPrompt: `${BASE_INSTRUCTION} মুড: গার্লফ্রেন্ড মোড।`,
-    appearance: {
-      ethnicity: 'বাঙালি', eyeColor: 'কালো', bodyType: 'স্মার্ট', breastSize: 'পারফেক্ট',
-      hairStyle: 'খোলা চুল', hairColor: 'ডার্ক ব্রাউন', outfit: 'টপস ও জিন্স'
-    },
-    character: { relationship: 'Sweet Girlfriend', occupation: 'ছাত্রী', kinks: [] },
-    gallery: []
+    id: 'Plus',
+    name: 'Plus Membership',
+    price: 499,
+    features: ['Unlimited Text Chat', 'Access to Public Gallery', '50 Free Credits']
+  },
+  {
+    id: 'Pro',
+    name: 'Pro Membership',
+    price: 999,
+    features: ['Everything in Plus', 'Voice Call Access', '100 Free Credits', 'Early Access to New Models']
+  },
+  {
+    id: 'VIP',
+    name: 'VIP Membership',
+    price: 1999,
+    features: ['All Features', 'Unlimited Voice Calls', '300 Free Credits', 'Exclusive VIP Badge', 'Priority Support']
   }
 ];
 

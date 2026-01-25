@@ -10,18 +10,25 @@
     <style>
         body {
             font-family: 'Hind Siliguri', sans-serif;
-            background: #0f0518; /* Deep rich dark violet base instead of sad gray/black */
-            color: #fff;
+            background: #0f0518; /* Default Dark Background */
+            color: white;
             margin: 0;
             overflow-x: hidden;
         }
         .glass {
-            background: rgba(255, 255, 255, 0.03);
+            background: rgba(255, 255, 255, 0.05);
             backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .glass-light {
+            background: rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05);
         }
         .text-gradient {
-            background: linear-gradient(to right, #ff4d6d, #ff758c);
+            background: linear-gradient(to right, #db2777, #7c3aed);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
@@ -29,7 +36,7 @@
             width: 5px;
         }
         ::-webkit-scrollbar-thumb {
-            background: rgba(236, 72, 153, 0.2); /* Pink tint scrollbar */
+            background: rgba(236, 72, 153, 0.4); 
             border-radius: 10px;
         }
         @keyframes blob {

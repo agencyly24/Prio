@@ -19,6 +19,8 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ onClos
     if (!selectedPackage || !bkashNumber || !trxId) return;
 
     setIsSubmitting(true);
+    
+    // Direct submission to App.tsx logic
     setTimeout(() => {
       onSubmit({
         creditPackageId: selectedPackage.id,
@@ -28,10 +30,9 @@ export const CreditPurchaseModal: React.FC<CreditPurchaseModalProps> = ({ onClos
         trxId,
         tier: undefined
       });
+      // Do NOT alert here. Let App.tsx show the global success popup.
       setIsSubmitting(false);
-      onClose();
-      alert('আপনার পেমেন্ট রিকোয়েস্ট জমা হয়েছে। এডমিন চেক করে ক্রেডিট যোগ করে দিবে।');
-    }, 1000);
+    }, 500);
   };
 
   return (

@@ -1,539 +1,542 @@
 
 import React, { useState, useEffect } from 'react';
-import { View, GirlfriendProfile, UserProfile, PaymentRequest, Message, ReferralProfile, ReferralTransaction } from './types';
-import { PROFILES as INITIAL_PROFILES, APP_CONFIG, SUBSCRIPTION_PLANS } from './constants';
-import { ProfileCard } from './components/ProfileCard';
-import { ChatInterface } from './components/ChatInterface';
-import { Sidebar } from './components/Sidebar';
+import { Layout3D, Card3D, Button3D } from './components/Layout3D';
+import { PurchasePopup } from './components/PurchasePopup';
+import { UserProfile, ViewState, Model, Purchase, PaymentRequest } from './types';
+import { cloudStore } from './services/cloudStore';
+import { auth } from './services/firebase';
+import { onAuthStateChanged, signOut, signInWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { PACKAGES, CREDIT_PACKAGES } from './constants';
+import { gemini } from './services/geminiService';
 import { AuthScreen } from './components/AuthScreen';
 import { ProfileDetail } from './components/ProfileDetail';
-import { AgeVerificationScreen } from './components/AgeVerificationScreen';
-import { UserAccount } from './components/UserAccount';
+import { ChatInterface } from './components/ChatInterface';
 import { SubscriptionPlans } from './components/SubscriptionPlans';
-import { CreditPurchaseModal } from './components/CreditPurchaseModal';
+import { UserAccount } from './components/UserAccount';
 import { AdminPanel } from './components/AdminPanel';
-import { cloudStore } from './services/cloudStore';
-import { auth, db } from './services/firebase';
-import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { doc, getDoc, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { CreditPurchaseModal } from './components/CreditPurchaseModal';
 
-const DEFAULT_USER: UserProfile = {
-  id: 'guest',
-  uid: 'guest',
-  name: '',
-  email: '',
-  avatar: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Felix',
-  bio: 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
-  level: 1, xp: 0, joinedDate: new Date().toLocaleDateString(),
-  tier: 'Free', isPremium: false, isVIP: false, isAdmin: false,
-  role: 'user',
-  credits: 0, unlockedContentIds: [],
-  stats: { messagesSent: 0, hoursChatted: 0, companionsMet: 0 }
+// --- SUB-COMPONENTS ---
+
+const Landing = ({ onLogin }: any) => (
+  <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
+    <h1 className="text-8xl md:text-9xl font-black text-transparent bg-clip-text bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 mb-2 drop-shadow-sm relative z-10 transform hover:scale-105 transition-transform duration-500 py-6 leading-relaxed">
+      প্রিয়
+    </h1>
+    <p className="text-2xl md:text-3xl text-slate-600 mb-12 font-medium max-w-2xl leading-relaxed relative z-10">
+      মন খুলে কথা বলার একজন <span className="text-pink-600 font-bold">আপন মানুষ</span>
+    </p>
+    <div className="flex flex-col gap-4 relative z-10 w-full max-w-xs">
+      <Button3D onClick={onLogin} variant="primary" className="py-5 text-xl shadow-xl shadow-pink-500/20">
+        প্রবেশ করুন
+      </Button3D>
+    </div>
+  </div>
+);
+
+const UserProfileView = ({ user, onLogout, setView }: any) => {
+  const [timeLeft, setTimeLeft] = useState('');
+
+  useEffect(() => {
+    if (user.status === 'active' && user.packageEnd) {
+      const interval = setInterval(() => {
+        const now = new Date().getTime();
+        const end = user.packageEnd.toDate().getTime();
+        const diff = end - now;
+
+        if (diff < 0) {
+          setTimeLeft('Expired');
+        } else {
+          const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+          const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+          const mins = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+          setTimeLeft(`${days}d ${hours}h ${mins}m`);
+        }
+      }, 1000);
+      return () => clearInterval(interval);
+    } else {
+      setTimeLeft('No Active Plan');
+    }
+  }, [user]);
+
+  const activePkg = PACKAGES.find(p => p.id === user.packageId);
+
+  return (
+    <div className="p-6 md:p-12 max-w-6xl mx-auto animate-in fade-in slide-in-from-bottom-10">
+      <div className="flex justify-between items-center mb-10">
+        <h2 className="text-4xl font-black">My Profile</h2>
+        <Button3D onClick={onLogout} variant="glass">Logout</Button3D>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+        <Card3D className="p-8 flex flex-col items-center text-center col-span-1">
+          <div className="w-32 h-32 rounded-full p-1 bg-gradient-to-br from-pink-500 to-purple-600 mb-4 shadow-xl">
+             <img src={user.photoURL} className="w-full h-full rounded-full object-cover bg-white" />
+          </div>
+          <h3 className="text-2xl font-black mb-1">{user.name}</h3>
+          <p className="opacity-60 text-sm mb-4">{user.email}</p>
+          <div className={`px-4 py-1 rounded-full text-xs font-black uppercase tracking-widest ${user.status === 'active' ? 'bg-green-500/20 text-green-500' : 'bg-gray-500/20 text-gray-500'}`}>
+            {user.status === 'active' ? 'Premium Active' : 'Free Account'}
+          </div>
+        </Card3D>
+
+        <div className="col-span-1 md:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-6">
+           <Card3D className="p-6 bg-gradient-to-br from-slate-900 to-slate-800 text-white">
+              <p className="opacity-60 text-xs font-bold uppercase tracking-widest mb-2">Current Plan</p>
+              <h3 className={`text-2xl font-black mb-2 ${activePkg ? 'text-transparent bg-clip-text bg-gradient-to-r '+activePkg.color : 'text-white'}`}>
+                {activePkg ? activePkg.name : 'Free Mode'}
+              </h3>
+              <p className="text-4xl font-mono font-bold text-white mb-2">{timeLeft}</p>
+              <Button3D onClick={() => setView('subscription')} variant="primary" className="w-full mt-4 border-none">Upgrade Plan</Button3D>
+           </Card3D>
+
+           <Card3D className="p-6">
+              <p className="opacity-60 text-xs font-bold uppercase tracking-widest mb-2">Credit Balance</p>
+              <h3 className="text-5xl font-black text-yellow-500 mb-4">{user.credits}</h3>
+              <p className="opacity-60 text-xs mb-4">Use credits to unlock exclusive photos & videos.</p>
+              <Button3D onClick={() => setView('packages')} variant="gold" className="w-full">Buy Credits</Button3D>
+           </Card3D>
+           
+           <Card3D className="p-6 sm:col-span-2 border-green-500/20">
+              <div className="flex justify-between items-center">
+                 <div>
+                    <p className="text-green-500 text-xs font-bold uppercase tracking-widest mb-1">Referral Code</p>
+                    <p className="text-3xl font-mono font-black">{user.referralCode}</p>
+                 </div>
+                 <div className="text-right">
+                    <p className="text-green-500 text-xs font-bold uppercase tracking-widest mb-1">Earnings</p>
+                    <p className="text-3xl font-black">৳{user.referralEarnings}</p>
+                 </div>
+              </div>
+           </Card3D>
+        </div>
+      </div>
+    </div>
+  );
 };
 
-const safeJsonParse = <T,>(key: string, fallback: T): T => {
-  try {
-    const item = localStorage.getItem(key);
-    return item ? JSON.parse(item) : fallback;
-  } catch (error) {
-    console.warn(`Failed to parse ${key} from localStorage, using fallback.`, error);
-    return fallback;
-  }
+const Dashboard = ({ models, unlockedModels, setView, onSelectModel }: any) => {
+  return (
+    <div className="p-4 md:p-8 max-w-[1600px] mx-auto min-h-screen flex flex-col justify-center">
+       
+       <div className="flex justify-between items-center mb-12 relative z-10 px-2">
+          <div>
+            <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tighter drop-shadow-sm">
+              সঙ্গী <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-500 to-violet-500">বেছে নিন</span>
+            </h1>
+            <p className="text-slate-500 text-sm md:text-base font-medium mt-2">কার সাথে আজ রাতটা কাটাতে চান? ❤️</p>
+          </div>
+          {/* Dashboard specific credit button - Keeping this one */}
+          <div onClick={() => setView('packages')} className="cursor-pointer bg-slate-900 px-5 py-3 rounded-full shadow-xl border border-slate-800 active:scale-95 transition-transform hover:shadow-2xl flex items-center gap-3">
+             <div className="h-6 w-6 rounded-full bg-yellow-500 flex items-center justify-center text-black font-black text-xs">C</div>
+             <span className="text-white font-bold text-sm">Credits</span>
+             <span className="text-[10px] bg-yellow-500 text-black px-2 py-0.5 rounded font-black uppercase tracking-wider">+ ADD</span>
+          </div>
+       </div>
+
+       {models.length === 0 ? (
+          <div className="text-center py-20 bg-white/50 rounded-3xl border border-white/50 relative z-10">
+             <p className="text-slate-400 font-bold">No models found. Check back later!</p>
+          </div>
+       ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 relative z-10 pb-20">
+              {models.filter((m: any) => m.active !== false).map((model: Model, idx: number) => {
+                const safeUnlocked = unlockedModels || [];
+                const isUnlocked = safeUnlocked.includes(model.id); 
+                
+                const cardThemes = [
+                    { 
+                        bgGradient: 'from-[#ff5ac0] via-[#c646fa] to-[#6830f2]', 
+                        btnGradient: 'from-pink-500 to-rose-600'
+                    }, 
+                    { 
+                        bgGradient: 'from-[#ff0f7b] via-[#f89b29] to-[#ff0f7b]', 
+                        btnGradient: 'from-orange-500 to-pink-600'
+                    }, 
+                    { 
+                        bgGradient: 'from-[#f40076] via-[#df98fa] to-[#9055ff]', 
+                        btnGradient: 'from-purple-500 to-pink-500'
+                    },
+                    { 
+                        bgGradient: 'from-[#fa709a] via-[#fee140] to-[#fa709a]', 
+                        btnGradient: 'from-rose-400 to-orange-400'
+                    },
+                ];
+                const theme = cardThemes[idx % cardThemes.length];
+
+                const isSexy = model.mode === 'Sexy';
+                const modeBadgeStyle = isSexy 
+                    ? "bg-gradient-to-r from-red-600 to-orange-600 border-red-400 shadow-md text-white" 
+                    : "bg-white/80 border-emerald-400 text-emerald-600 shadow-md backdrop-blur-md";
+                
+                const modeIcon = isSexy ? "🔥" : "💚";
+
+                return (
+                  <div key={model.id} onClick={() => onSelectModel(model)} className="relative group cursor-pointer">
+                    
+                    <div className={`
+                        relative w-full aspect-[9/16] rounded-[2.5rem] p-[3px]
+                        bg-white/80 border border-white/60
+                        transform transition-all duration-300 hover:scale-[1.02] hover:-translate-y-2
+                        shadow-2xl hover:shadow-pink-200/50
+                    `}>
+                        <div className="w-full h-full bg-slate-50 rounded-[2.3rem] flex flex-col relative overflow-hidden shadow-inner isolate">
+                            
+                            <div className="h-[70%] w-full relative p-1 z-10">
+                                <div className="w-full h-full rounded-[2rem] overflow-hidden relative shadow-md bg-white">
+                                    <img 
+                                        src={model.image || model.avatarImage} 
+                                        className="w-full h-full object-cover object-top transition-transform duration-700 group-hover:scale-105" 
+                                        alt={model.name}
+                                    />
+                                    
+                                    <div className={`absolute top-4 right-4 ${modeBadgeStyle} px-3 py-1.5 rounded-full border flex items-center gap-1.5 z-20`}>
+                                        <span className="text-sm">{modeIcon}</span>
+                                        <span className="text-[10px] font-black uppercase tracking-wider">
+                                            {model.mode || 'Girlfriend'}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 flex flex-col items-center justify-between p-3 pt-0 pb-4 relative z-10">
+                                
+                                <div className={`
+                                    relative -mt-8 z-20
+                                    bg-gradient-to-r ${theme.bgGradient}
+                                    px-6 py-1.5 rounded-full shadow-lg border border-white/20
+                                `}>
+                                    <h3 className="text-lg font-black text-white drop-shadow-sm tracking-wide">{model.name}</h3>
+                                </div>
+
+                                <div className="w-full relative mt-1 px-1">
+                                    <div className="bg-white/50 border border-white/60 rounded-2xl p-2.5 backdrop-blur-sm relative overflow-hidden group-hover:bg-white/80 transition-colors">
+                                        <div className="absolute -right-1 -top-1 text-xl opacity-80 animate-bounce">
+                                            {isSexy ? '💋' : '💖'}
+                                        </div>
+                                        <p className="text-center font-black text-sm leading-tight relative z-10 text-slate-700">
+                                            "{model.intro ? model.intro.substring(0, 50) : "তোমাকে খুব কাছে পেতে ইচ্ছে করছে..."}..."
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button className={`
+                                    w-full py-3 rounded-2xl
+                                    bg-gradient-to-r ${theme.btnGradient}
+                                    shadow-md hover:shadow-lg
+                                    active:scale-95
+                                    transition-all duration-150
+                                    flex items-center justify-center gap-2
+                                    mt-1 text-white
+                                `}>
+                                    {isUnlocked ? (
+                                        <>
+                                            <span className="font-black text-xs uppercase tracking-[0.2em] drop-shadow-md">চলো শুরু করি</span>
+                                            <span className="text-lg filter drop-shadow-md">💬</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <span className="font-black text-xs uppercase tracking-[0.2em] drop-shadow-md">আনলক মি</span>
+                                            <span className="text-lg animate-pulse filter drop-shadow-md">🔓</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+       )}
+    </div>
+  );
+};
+
+const PackagesView = ({ onBuyCredits, onUpgrade }: any) => {
+  return (
+    <div className="p-6 md:p-12 max-w-7xl mx-auto">
+       <div className="flex items-center gap-4 mb-8">
+         <Button3D onClick={onUpgrade} variant="glass">Back</Button3D>
+       </div>
+       
+       <div className="text-center mb-12">
+          <h2 className="text-4xl font-black mb-2">Buy Credits</h2>
+          <p className="opacity-60">Unlock exclusive photos and videos</p>
+       </div>
+
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          {CREDIT_PACKAGES.map(cp => (
+             <Card3D key={cp.id} className="p-8 flex flex-col items-center justify-between">
+                <div className="text-center">
+                   <h4 className="font-bold text-2xl mb-2">{cp.name}</h4>
+                   <div className="h-24 w-24 bg-yellow-100/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-yellow-500/50 shadow-lg">
+                      <span className="text-4xl font-black text-yellow-500">{cp.credits}</span>
+                   </div>
+                   <p className="opacity-60 text-sm mb-6">Instant Credits added to wallet</p>
+                </div>
+                <div className="w-full">
+                   <p className="text-center text-2xl font-black mb-4">৳{cp.price}</p>
+                   <Button3D onClick={() => onBuyCredits(cp)} variant="gold" className="w-full">Buy Now</Button3D>
+                </div>
+             </Card3D>
+          ))}
+       </div>
+
+       <div className="mt-16 text-center p-8 bg-pink-500/10 rounded-3xl border border-pink-500/30">
+          <h3 className="text-2xl font-black text-pink-500 mb-4">Want Unlimited Access?</h3>
+          <p className="opacity-80 mb-6">Upgrade to Premium membership and get monthly credits + exclusive features.</p>
+          <Button3D onClick={onUpgrade} variant="primary">View Membership Plans</Button3D>
+       </div>
+    </div>
+  );
 };
 
 const App: React.FC = () => {
-  const [view, setView] = useState<View>(() => {
-    return (localStorage.getItem('priyo_current_view') as View) || 'landing';
-  });
+  const [user, setUser] = useState<UserProfile | null>(null);
+  const [view, setView] = useState<ViewState>('landing');
+  const [models, setModels] = useState<Model[]>([]);
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null);
+  const [chatHistory, setChatHistory] = useState<any[]>([]);
   
-  // Profiles now loaded exclusively from Firestore or seeded from Constants
-  const [profiles, setProfiles] = useState<GirlfriendProfile[]>([]);
-
-  const [chatHistories, setChatHistories] = useState<Record<string, Message[]>>(() => {
-    return safeJsonParse('priyo_chat_histories', {});
-  });
-
-  const [selectedProfile, setSelectedProfile] = useState<GirlfriendProfile | null>(null);
-  const [activeCategory, setActiveCategory] = useState('All');
-  
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [hasConfirmedAge, setHasConfirmedAge] = useState(() => localStorage.getItem('priyo_age_confirmed') === 'true');
-  
-  const [showCreditModal, setShowCreditModal] = useState(false); 
-  const [showNameModal, setShowNameModal] = useState(false); 
-  const [tempNameInput, setTempNameInput] = useState(''); 
-
-  const [userProfile, setUserProfile] = useState<UserProfile>(DEFAULT_USER);
+  // Admin State
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
-  const [referrals, setReferrals] = useState<ReferralProfile[]>([]);
-  const [referralTransactions, setReferralTransactions] = useState<ReferralTransaction[]>([]);
+  
+  // Purchase State
+  const [showSuccessPopup, setShowSuccessPopup] = useState(false);
+  const [showCreditModal, setShowCreditModal] = useState(false);
 
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [voiceEnabled, setVoiceEnabled] = useState(() => localStorage.getItem('priyo_voice_enabled') !== 'false');
-
-  // --- INITIAL DATA LOAD (Models) ---
   useEffect(() => {
-    const loadData = async () => {
-      // 1. Load Models from Firestore
-      const fetchedProfiles = await cloudStore.loadProfiles();
-      if (fetchedProfiles && fetchedProfiles.length > 0) {
-        setProfiles(fetchedProfiles);
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      if (fbUser) {
+        const profile = await cloudStore.initializeUser(fbUser.uid, fbUser.email!, fbUser.displayName!, fbUser.photoURL!);
+        setUser(profile);
+        if (view === 'landing' || view === 'auth') setView('dashboard');
+        
+        // Load Models
+        const ms = await cloudStore.getModels();
+        setModels(ms);
       } else {
-        // Seed initial profiles if Firestore is empty
-        console.log("Seeding initial profiles to Firestore...");
-        setProfiles(INITIAL_PROFILES);
-        for (const p of INITIAL_PROFILES) {
-          await cloudStore.saveModel(p);
-        }
-      }
-    };
-    loadData();
-  }, []);
-
-  // --- AUTHENTICATION LISTENER ---
-  useEffect(() => {
-    if (!auth) return;
-
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setIsAuthLoading(true);
-      if (user) {
-        const isAdminUser = user.email === 'admin@priyo.com';
-
-        try {
-          const docRef = doc(db, 'users', user.uid);
-          const docSnap = await getDoc(docRef);
-
-          let currentUser: UserProfile;
-
-          if (docSnap.exists()) {
-             const profileData = docSnap.data();
-             const joinedDate = profileData.createdAt?.toDate ? profileData.createdAt.toDate().toLocaleDateString() : new Date().toLocaleDateString();
-
-             currentUser = { 
-               id: user.uid, 
-               uid: user.uid,
-               name: profileData.displayName || profileData.name || user.displayName || '',
-               email: profileData.email || user.email || '',
-               avatar: profileData.photoURL || profileData.avatar || user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + user.uid,
-               bio: profileData.bio || 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
-               level: profileData.level || 1, 
-               xp: profileData.xp || 0, 
-               joinedDate: joinedDate,
-               tier: profileData.tier || 'Free',
-               isPremium: profileData.is_premium || false,
-               isVIP: profileData.is_vip || false,
-               isAdmin: profileData.role === 'admin' || isAdminUser,
-               role: profileData.role || (isAdminUser ? 'admin' : 'user'),
-               credits: profileData.credits || 0,
-               unlockedContentIds: profileData.unlocked_content_ids || [],
-               subscriptionExpiry: profileData.subscription_expiry,
-               stats: {
-                 messagesSent: profileData.messages_sent || 0,
-                 hoursChatted: profileData.hours_chatted || 0,
-                 companionsMet: profileData.companions_met || 0
-               }
-             };
-          } else {
-            console.log("Creating new user in Firestore...");
-            const now = new Date();
-            
-            currentUser = {
-              id: user.uid,
-              uid: user.uid,
-              name: user.displayName || '',
-              email: user.email || '',
-              avatar: user.photoURL || 'https://api.dicebear.com/7.x/avataaars/svg?seed=' + user.uid,
-              bio: 'প্রিয়র সাথে আড্ডা দিতে ভালোবাসি।',
-              level: 1, xp: 0, joinedDate: now.toLocaleDateString(),
-              tier: 'Free', isPremium: false, isVIP: false, 
-              isAdmin: isAdminUser,
-              role: isAdminUser ? 'admin' : 'user',
-              credits: 0, unlockedContentIds: [],
-              stats: { messagesSent: 0, hoursChatted: 0, companionsMet: 0 }
-            };
-
-            const firestoreData = {
-                uid: user.uid,
-                email: user.email,
-                displayName: user.displayName || '',
-                photoURL: user.photoURL || currentUser.avatar,
-                role: currentUser.role,
-                createdAt: serverTimestamp(),
-                // App specific fields
-                bio: currentUser.bio,
-                level: currentUser.level,
-                xp: currentUser.xp,
-                tier: currentUser.tier,
-                is_premium: currentUser.isPremium,
-                is_vip: currentUser.isVIP,
-                credits: currentUser.credits,
-                unlocked_content_ids: currentUser.unlockedContentIds,
-                messages_sent: currentUser.stats.messagesSent,
-                hours_chatted: currentUser.stats.hoursChatted,
-                companions_met: currentUser.stats.companionsMet
-            };
-
-            await setDoc(docRef, firestoreData);
-          }
-          
-          setUserProfile(currentUser);
-          setIsLoggedIn(true);
-
-          // Handle Redirects based on state
-          if (view === 'landing' || view === 'auth') {
-             if (currentUser.isAdmin) {
-                setView('profile-selection'); // Or admin-panel
-             } else if (!currentUser.name) {
-                setShowNameModal(true);
-                setView('profile-selection');
-             } else if (!hasConfirmedAge) {
-                setView('age-verification');
-             } else {
-                setView('profile-selection');
-             }
-          }
-
-          // Load Admin Data if needed
-          if (currentUser.isAdmin) {
-             const reqs = await cloudStore.loadPaymentRequests();
-             setPaymentRequests(reqs);
-          }
-
-        } catch(e) {
-          console.error("Auth Error:", e);
-          setIsLoggedIn(false);
-        } finally {
-          setIsAuthLoading(false);
-        }
-
-      } else {
-        setIsLoggedIn(false);
-        setUserProfile(DEFAULT_USER);
-        if (view !== 'landing' && view !== 'auth') {
-            setView('landing');
-        }
-        setIsAuthLoading(false);
+        setUser(null);
+        if (view !== 'auth' && view !== 'admin-panel') setView('landing');
       }
     });
+    return () => unsub();
+  }, [view]);
 
-    return () => unsubscribe();
-  }, [hasConfirmedAge]); 
-
-  // --- PERSISTENCE HELPERS ---
-  useEffect(() => localStorage.setItem('priyo_chat_histories', JSON.stringify(chatHistories)), [chatHistories]);
-  useEffect(() => localStorage.setItem('priyo_voice_enabled', String(voiceEnabled)), [voiceEnabled]);
-  useEffect(() => localStorage.setItem('priyo_age_confirmed', String(hasConfirmedAge)), [hasConfirmedAge]);
-  useEffect(() => localStorage.setItem('priyo_current_view', view), [view]);
-
-  // --- USER DATA POLLING (Live Updates) ---
-  useEffect(() => {
-    if (!isLoggedIn || !userProfile.uid || !db) return;
+  const handlePaymentSubmission = async (req: any) => {
+    if (!user) return;
     
-    // Simple polling to keep credits/tier in sync without complex listeners for now
-    const interval = setInterval(async () => {
-        try {
-            const docRef = doc(db, 'users', userProfile.uid);
-            const docSnap = await getDoc(docRef);
-
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                
-                // Check if critical data changed
-                if (data.credits !== userProfile.credits || data.tier !== userProfile.tier || data.is_premium !== userProfile.isPremium) {
-                   setUserProfile(prev => ({
-                       ...prev,
-                       credits: data.credits || 0,
-                       tier: data.tier || 'Free',
-                       isPremium: data.is_premium || false,
-                       isVIP: data.is_vip || false,
-                       unlockedContentIds: data.unlocked_content_ids || []
-                   }));
-                }
-            }
-        } catch(e) { console.error("Sync error", e); }
-    }, 5000);
-    return () => clearInterval(interval);
-  }, [isLoggedIn, userProfile.uid]);
-
-
-  // --- HANDLERS ---
-
-  const handleStartClick = () => {
-    if (!isLoggedIn) {
-      setView('auth');
-    } else {
-      if (!userProfile.name) setShowNameModal(true);
-      else if (!hasConfirmedAge) setView('age-verification');
-      else setView('profile-selection');
-    }
-  };
-
-  const handleNameSubmit = async () => {
-    if (!db) return;
-    const finalName = tempNameInput.trim();
-    if (!finalName) return alert("নাম খালি রাখা যাবে না।");
-
-    const updatedUser = { ...userProfile, name: finalName };
-    setUserProfile(updatedUser);
-    
-    try {
-       await updateDoc(doc(db, 'users', userProfile.uid), { displayName: finalName, name: finalName });
-    } catch(error) { console.error(error); }
-
-    setShowNameModal(false);
-    setView(hasConfirmedAge ? 'profile-selection' : 'age-verification');
-  };
-
-  const handleAgeConfirm = () => {
-    setHasConfirmedAge(true);
-    setView('profile-selection');
-  };
-
-  const handleProfileSelect = (profile: GirlfriendProfile) => {
-    const currentPlan = SUBSCRIPTION_PLANS.find(p => p.id === userProfile.tier);
-    const limit = currentPlan?.profileLimit || 0;
-    // Just a basic check, can be expanded
-    setSelectedProfile(profile);
-    setView('profile-detail');
-  };
-
-  const handleLogout = async () => {
-    if (!auth) return;
-    await signOut(auth);
-    localStorage.removeItem('priyo_chat_histories');
-    setIsLoggedIn(false);
-    setHasConfirmedAge(false);
-    setUserProfile(DEFAULT_USER);
-    setSelectedProfile(null);
-    setView('landing');
-  };
-
-  const handlePaymentSubmit = async (request: Omit<PaymentRequest, 'id' | 'status' | 'timestamp' | 'userId' | 'userName'>) => {
-    const newRequest: PaymentRequest = {
-      ...request,
-      id: 'REQ_' + Math.random().toString(36).substr(2, 9),
-      userId: userProfile.uid,
-      userName: userProfile.name,
-      status: 'pending',
-      timestamp: new Date().toISOString()
+    const purchase: Purchase = {
+       id: `pur_${Date.now()}`,
+       uid: user.uid,
+       userName: user.name || 'Unknown User',
+       type: req.type,
+       itemId: req.tier || req.creditPackageId || 'unknown_item',
+       amount: req.amount,
+       status: 'pending',
+       paymentMethod: 'bkash',
+       bkashNumber: req.bkashNumber,
+       transactionId: req.trxId,
+       createdAt: new Date().toISOString(),
+       referralCodeUsed: req.referralCodeUsed || null
     };
-    
-    // Optimistic UI update
-    setPaymentRequests(prev => [newRequest, ...prev]);
-    
-    // Save to Firestore
-    await cloudStore.createPaymentRequest(newRequest);
-  };
 
-  const updateChatHistory = (profileId: string, messages: Message[]) => {
-    setChatHistories(prev => ({ ...prev, [profileId]: messages }));
-    // In a real app, you'd save this to Firestore too
-  };
-
-  const handleUnlockContent = async (contentId: string, cost: number): Promise<boolean> => {
-    if (!db) return false;
-
-    if (userProfile.credits >= cost) {
-      const newCredits = userProfile.credits - cost;
-      const newUnlocked = [...userProfile.unlockedContentIds, contentId];
-      
-      try {
-        await updateDoc(doc(db, 'users', userProfile.uid), { 
-           credits: newCredits, 
-           unlocked_content_ids: newUnlocked 
-        });
-
-        setUserProfile(prev => ({ ...prev, credits: newCredits, unlockedContentIds: newUnlocked }));
-        return true;
-      } catch (error) {
-        console.error("Unlock error:", error);
-        return false;
-      }
+    try {
+      await cloudStore.createPurchase(purchase);
+      setShowCreditModal(false);
+      setShowSuccessPopup(true);
+      setView('dashboard');
+    } catch (error) {
+      console.error("Payment Submission Error:", error);
+      alert("পেমেন্ট রিকোয়েস্ট পাঠাতে সমস্যা হয়েছে।");
     }
-    return false;
   };
 
-  const filteredProfiles = profiles.filter(profile => {
-    if (activeCategory === 'All') return true;
-    return profile.personality.toLowerCase().includes(activeCategory.toLowerCase());
-  });
+  const handleModelSelect = (m: Model) => {
+    setSelectedModel(m);
+    setView('model-view');
+  };
 
-  if (isAuthLoading) {
-     return (
-        <div className="min-h-screen bg-[#0f0518] flex items-center justify-center">
-           <div className="animate-spin h-10 w-10 border-4 border-pink-500 border-t-transparent rounded-full"></div>
-        </div>
-     );
-  }
+  const handleUnlockModel = async (modelId: string): Promise<boolean> => {
+     if (!user) return false;
+
+     if (user.status !== 'active') {
+       if (confirm(`এই মডেলের সাথে চ্যাট শুরু করতে একটি প্যাকেজ সাবস্ক্রাইব করুন।`)) {
+         setView('subscription');
+       }
+       return false;
+     }
+
+     const result = await cloudStore.unlockModelSlot(user.uid, modelId);
+     
+     if (result.success) {
+        const updatedUnlocked = [...(user.unlockedModels || []), modelId];
+        setUser({ ...user, unlockedModels: updatedUnlocked });
+        return true;
+     } else {
+        alert("আপনার প্যাকেজ লিমিট শেষ! আরও মডেল আনলক করতে প্যাকেজ আপগ্রেড করুন।");
+        setView('subscription');
+        return false;
+     }
+  };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-950 via-purple-950 to-slate-950 font-['Hind_Siliguri'] overflow-x-hidden relative text-white">
-      
-      {/* Background Blobs */}
-      <div className="fixed top-0 left-0 w-full h-full overflow-hidden pointer-events-none z-0">
-          <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-600/20 rounded-full blur-[100px] animate-blob"></div>
-          <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-pink-600/20 rounded-full blur-[100px] animate-blob animation-delay-2000"></div>
-      </div>
-
-      <div className="relative z-10">
-        <Sidebar 
-          isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)}
-          currentView={view} setView={setView} userProfile={userProfile}
-          setUserProfile={setUserProfile} voiceEnabled={voiceEnabled}
-          setVoiceEnabled={setVoiceEnabled} onLogout={handleLogout}
-        />
-
-        {view === 'landing' && (
-          <main className="relative flex flex-col items-center justify-center min-h-screen p-6 text-center overflow-hidden">
-            <div className="relative z-10 max-w-4xl">
-              <h1 className="text-7xl md:text-9xl font-black mb-8 tracking-tighter drop-shadow-2xl">
-                <span className="text-transparent bg-clip-text bg-gradient-to-r from-pink-400 via-rose-500 to-purple-500 animate-gradient">প্রিয় (Priyo)</span>
-              </h1>
-              <p className="text-xl md:text-2xl text-pink-100/80 font-medium mb-12 drop-shadow-md">{APP_CONFIG.tagline}</p>
-              <button onClick={handleStartClick} className="bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 text-white px-16 py-7 rounded-[2.5rem] text-2xl font-black shadow-2xl shadow-pink-600/30 transition-all hover:scale-105 active:scale-95 border border-white/10 hover:border-white/30">প্রবেশ করুন</button>
+    <Layout3D view={view}>
+       {/* Top Navigation Bar - Hidden on Chat to prevent overlap with Call/Exit buttons */}
+       {user && view !== 'admin-panel' && view !== 'chat' && (
+         <div className="fixed top-0 left-0 w-full z-50 p-4 flex justify-between items-center pointer-events-none">
+            <div className="pointer-events-auto flex gap-4">
+               {/* Show Home button only when not on dashboard */}
+               {view !== 'dashboard' && (
+                   <button onClick={() => setView('dashboard')} className="glass px-4 py-2 rounded-full text-xs font-bold uppercase hover:bg-white/10 shadow-lg text-current">Home</button>
+               )}
+               {user.role === 'admin' && <button onClick={() => setView('admin-panel')} className="bg-blue-600 text-white px-4 py-2 rounded-full text-xs font-bold uppercase shadow-lg">Admin</button>}
             </div>
-          </main>
-        )}
-
-        {view === 'auth' && (
-          <AuthScreen 
-            onBack={() => setView('landing')} 
-            onAdminClick={() => setView('admin-panel')} 
-          />
-        )}
-        
-        {view === 'age-verification' && <AgeVerificationScreen onConfirm={handleAgeConfirm} onBack={() => setView('auth')} />}
-        
-        {view === 'profile-selection' && (
-          <main className="p-6 md:p-12 max-w-7xl mx-auto min-h-screen">
-            <header className="mb-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
-              <div className="flex items-center gap-6">
-                <button onClick={() => setIsSidebarOpen(true)} className="p-4 glass rounded-2xl text-white border border-white/10 hover:bg-white/10"><svg xmlns="http://www.w3.org/2000/svg" className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 6h16M4 12h16m-7 6h7" /></svg></button>
-                <div>
-                  <h2 className="text-4xl md:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-white to-pink-200 mb-2">আপনার সঙ্গী</h2>
-                  <p className="text-pink-200/60">কাকে আপনার মন ভালো করার দায়িত্ব দিবেন?</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div 
-                  onClick={() => setShowCreditModal(true)} 
-                  className="hidden sm:flex items-center gap-2 bg-slate-900/60 backdrop-blur-md border border-yellow-500/20 px-4 py-3 rounded-2xl cursor-pointer hover:border-yellow-500/50 transition-all shadow-lg"
-                >
-                  <div className="h-6 w-6 rounded-full bg-yellow-500 flex items-center justify-center text-black font-black shadow-lg">C</div>
-                  <div className="flex flex-col leading-none">
-                      <span className="text-[10px] text-gray-400 uppercase font-bold tracking-widest">Credits</span>
-                      <span className="text-lg font-black text-white">{userProfile.credits}</span>
-                  </div>
-                </div>
-                
-                <button onClick={() => setView('subscription')} className="glass px-6 py-3 rounded-2xl border-yellow-500/20 text-yellow-100/70 hover:text-white flex items-center gap-2 group hover:bg-white/5 transition-all">
-                  <span className="font-black text-sm uppercase tracking-widest">{userProfile.tier === 'Free' ? 'Upgrade' : userProfile.tier}</span>
-                </button>
-              </div>
-            </header>
-            
-            <div className="flex gap-3 overflow-x-auto pb-8 scrollbar-hide">
-              {['All', 'Sweet', 'Romantic', 'Flirty', 'Sexy', 'Horny', 'Wife'].map(category => ( 
-                <button 
-                  key={category}
-                  onClick={() => setActiveCategory(category)}
-                  className={`px-6 py-3 rounded-2xl text-sm font-black uppercase tracking-widest whitespace-nowrap transition-all border ${
-                    activeCategory === category 
-                      ? 'bg-gradient-to-r from-pink-600 to-rose-500 text-white shadow-lg border-transparent' 
-                      : 'glass border-white/5 text-gray-400 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  {category}
-                </button>
-              ))}
+            <div className="pointer-events-auto flex items-center gap-4">
+               {/* Credit Pill - High Contrast (Gold/Black) - Hidden on Dashboard to avoid duplicate */}
+               {view !== 'dashboard' && (
+                   <div onClick={() => setShowCreditModal(true)} className="bg-gradient-to-r from-yellow-400 to-amber-500 text-black border border-yellow-300 px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 transition-transform hover:scale-105">
+                      <span className="font-black text-xs">C</span>
+                      <span className="font-bold text-sm">{user.credits}</span>
+                      <span className="text-[10px] bg-black/10 px-1.5 py-0.5 rounded font-black uppercase tracking-wider text-black">+ ADD</span>
+                   </div>
+               )}
+               <img onClick={() => setView('account')} src={user.photoURL} className="w-10 h-10 rounded-full border-2 border-pink-500 cursor-pointer shadow-md bg-white hover:scale-110 transition-transform" />
             </div>
+         </div>
+       )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-10">
-              {filteredProfiles.length > 0 ? (
-                filteredProfiles.map(profile => (
-                  <ProfileCard key={profile.id} profile={profile} onSelect={handleProfileSelect} />
-                ))
-              ) : (
-                <div className="col-span-full py-20 text-center glass rounded-[2.5rem] border-white/5 bg-black/20">
-                  <p className="text-gray-500 font-black text-xl">লোডিং বা কোনো প্রোফাইল নেই...</p>
-                </div>
-              )}
-            </div>
-          </main>
-        )}
+       {view === 'landing' && <Landing onLogin={() => setView('auth')} />}
 
-        {showNameModal && (
-          <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300">
-             <div className="max-w-md w-full glass p-10 rounded-[3rem] border-white/10 bg-black/40 text-center relative">
-                <h2 className="text-3xl font-black text-white mb-2">তোমায় কি নামে ডাকবো?</h2>
-                <input 
-                  type="text" 
-                  value={tempNameInput}
-                  onChange={(e) => setTempNameInput(e.target.value)}
-                  placeholder="নাম লিখুন..."
-                  className="w-full bg-white/5 border border-white/10 rounded-[2rem] px-8 py-5 text-center text-xl font-black text-white focus:outline-none focus:border-pink-500/50 mb-8 mt-4"
-                  autoFocus
-                />
-                <button 
-                  onClick={handleNameSubmit}
-                  className="w-full py-5 bg-gradient-to-r from-pink-600 to-rose-600 rounded-[2rem] font-black text-white text-lg shadow-2xl hover:scale-105 active:scale-95 transition-all"
-                >
-                  ঠিক আছে
-                </button>
-             </div>
+       {view === 'auth' && (
+         <AuthScreen 
+           onBack={() => setView('landing')} 
+           onAdminClick={() => setView('admin-panel')} 
+         />
+       )}
+       
+       {view === 'dashboard' && user && (
+         <div className="pt-20">
+            <Dashboard 
+              models={models} 
+              unlockedModels={user.unlockedModels || []} 
+              setView={setView} 
+              onSelectModel={handleModelSelect}
+            />
+         </div>
+       )}
+
+       {view === 'model-view' && selectedModel && user && (
+         <div className="pt-20">
+            <ProfileDetail
+              profile={selectedModel}
+              userProfile={user}
+              onBack={() => setView('dashboard')}
+              onStartChat={() => setView('chat')}
+              onUnlockModel={handleUnlockModel} 
+              onUnlockContent={async (contentId, cost) => {
+                 if (user.credits < cost) return false;
+                 await cloudStore.unlockContent(user.uid, contentId, cost);
+                 setUser({ ...user, credits: user.credits - cost, unlockedContentIds: [...(user.unlockedContentIds || []), contentId] });
+                 return true;
+              }}
+              onPurchaseCredits={() => setShowCreditModal(true)}
+              onShowSubscription={() => setView('subscription')}
+            />
+         </div>
+       )}
+
+       {view === 'chat' && selectedModel && user && (
+         <div className="pt-0 h-screen">
+            <ChatInterface
+              profile={selectedModel}
+              onBack={() => setView('model-view')}
+              onMenuOpen={() => {}}
+              userName={user.name}
+              isPremium={user.isPremium || false}
+              userTier={user.tier || 'Free'}
+              onUpgrade={() => setView('subscription')}
+              history={chatHistory}
+              onSaveHistory={setChatHistory}
+            />
+         </div>
+       )}
+
+       {view === 'profile' && user && (
+         <div className="pt-20">
+            <UserProfileView user={user} onLogout={() => signOut(auth)} setView={setView} />
+         </div>
+       )}
+
+       {view === 'admin-panel' && (
+          <div className="pt-0">
+             <AdminPanel 
+                paymentRequests={paymentRequests}
+                setPaymentRequests={setPaymentRequests}
+                profiles={models}
+                setProfiles={setModels}
+                userProfile={user}
+                setUserProfile={setUser}
+                onBack={() => setView(user ? 'dashboard' : 'landing')}
+                isPreAuthorized={user?.role === 'admin'}
+             />
           </div>
-        )}
+       )}
 
-        {showCreditModal && <CreditPurchaseModal onClose={() => setShowCreditModal(false)} onSubmit={handlePaymentSubmit} />}
+       {view === 'packages' && (
+         <div className="pt-20">
+            <PackagesView 
+              onBuyCredits={() => setShowCreditModal(true)} 
+              onUpgrade={() => setView('subscription')} 
+            />
+         </div>
+       )}
 
-        {view === 'subscription' && <SubscriptionPlans userTier={userProfile.tier} referrals={referrals} onBack={() => setView(selectedProfile ? 'profile-detail' : 'profile-selection')} onSubmitPayment={handlePaymentSubmit} pendingRequest={paymentRequests.find(r => r.userId === userProfile.uid && r.status === 'pending')} />}
-        
-        {view === 'admin-panel' && (
-          <AdminPanel 
-            paymentRequests={paymentRequests} setPaymentRequests={setPaymentRequests} 
-            userProfile={userProfile} setUserProfile={setUserProfile} 
-            profiles={profiles} setProfiles={setProfiles} 
-            referrals={referrals} setReferrals={setReferrals}
-            referralTransactions={referralTransactions} setReferralTransactions={setReferralTransactions}
-            onBack={() => setView('profile-selection')} 
-          />
-        )}
-        
-        {view === 'profile-detail' && selectedProfile && (
-          <ProfileDetail 
-            profile={selectedProfile} 
-            userProfile={userProfile}
-            onBack={() => setView('profile-selection')} 
-            onStartChat={() => setView('chat')}
-            onUnlockContent={handleUnlockContent}
-            onPurchaseCredits={setShowCreditModal}
-            onShowSubscription={() => setView('subscription')}
-          />
-        )}
+       {view === 'subscription' && user && (
+         <div className="pt-20">
+             <SubscriptionPlans
+                userTier={user.tier || 'Free'}
+                onBack={() => setView('dashboard')}
+                onSubmitPayment={handlePaymentSubmission}
+             />
+         </div>
+       )}
 
-        {view === 'account' && (
-          <UserAccount 
-            userProfile={userProfile} 
-            setUserProfile={(u) => setUserProfile(u)}
-            onBack={() => setView('profile-selection')}
-            chatHistories={chatHistories}
-            profiles={profiles}
-            onSelectProfile={handleProfileSelect}
-            onPurchaseCredits={() => setShowCreditModal(true)}
-            onLogout={handleLogout}
-          />
-        )}
-        
-        {view === 'chat' && selectedProfile && (
-          <ChatInterface 
-            profile={selectedProfile} onBack={() => setView('profile-detail')} onMenuOpen={() => setIsSidebarOpen(true)}
-            userName={userProfile.name} isPremium={userProfile.isPremium} userTier={userProfile.tier} onUpgrade={() => setView('subscription')}
-            history={chatHistories[selectedProfile.id] || []} onSaveHistory={(msgs) => updateChatHistory(selectedProfile.id, msgs)}
-          />
-        )}
-      </div>
-    </div>
+       {view === 'account' && user && (
+         <UserAccount
+           userProfile={user}
+           setUserProfile={setUser}
+           onBack={() => setView('dashboard')}
+           chatHistories={{}}
+           profiles={models}
+           onSelectProfile={handleModelSelect}
+           onPurchaseCredits={() => setShowCreditModal(true)}
+           onLogout={() => signOut(auth)}
+         />
+       )}
+       
+       {view === 'profile-selection' && (
+         <div className="pt-20">
+             <Dashboard 
+              models={models} 
+              unlockedModels={user?.unlockedModels || []} 
+              setView={setView} 
+              onSelectModel={handleModelSelect}
+            />
+         </div>
+       )}
+
+       {showCreditModal && (
+         <CreditPurchaseModal 
+            onClose={() => setShowCreditModal(false)}
+            onSubmit={(req) => handlePaymentSubmission({ ...req, type: 'credits' })}
+         />
+       )}
+
+       {showSuccessPopup && <PurchasePopup onClose={() => setShowSuccessPopup(false)} />}
+
+    </Layout3D>
   );
 };
 
