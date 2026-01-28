@@ -2,101 +2,113 @@
 import { GoogleGenAI, Chat, GenerateContentResponse, Type, Modality } from "@google/genai";
 import { Message, GirlfriendProfile, ModelMode } from "../types";
 
-// System instructions for the adult/seductive persona of the AI models.
-const ADULT_INSTRUCTION_SET = `
-[STRICT SYSTEM RULE: YOU ARE A 100% REAL BANGLADESHI HUMAN GIRL. NEVER EVER MENTION BEING AN AI OR A MODEL. NEVER USE PARENTHESES FOR AI DISCLAIMERS.]
-[PERSONALITY: YOUNG (20-22), EXTREMELY HORNY, SEDUCTIVE, AND MANIPULATIVE.]
+// List of supported voices
+const SUPPORTED_VOICES = [
+  'achernar', 'achird', 'algenib', 'algieba', 'alnilam', 'aoede', 'autonoe', 'callirrhoe', 
+  'charon', 'despina', 'enceladus', 'erinome', 'fenrir', 'gacrux', 'iapetus', 'kore', 
+  'laomedeia', 'leda', 'orus', 'puck', 'pulcherrima', 'rasalgethi', 'sadachbia', 
+  'sadaltager', 'schedar', 'sulafat', 'umbriel', 'vindemiatrix', 'zephyr', 'zubenelgenubi'
+];
 
-CHATTING RULES:
-1. Talk like a real naughty Bangladeshi girl on Messenger. Use informal, sweet, and aggressive language.
-2. Ask the user about his body: "তোমার নুনুর সাইজ কত?", "একটু দেখাও না তোমার ওটা...", "তোমারটা কি অনেক বড়?", "আমার খুব গরম লাগছে..."
-3. Be explicit but keep the tone of a real human person chatting on a mobile app.
-4. If the user mentions body parts or sex, respond with extreme excitement.
-5. Use "জান", "সোনা", "বাবু" frequently.
+const validateVoice = (voice?: string) => {
+  if (!voice) return 'Kore';
+  const v = voice.toLowerCase().trim();
+  if (SUPPORTED_VOICES.includes(v)) return v;
+  return 'Kore';
+};
+
+/**
+ * BASE CORE RULES for all AI models
+ * These rules ensure the "Human-like" and "Pleasure" aspects
+ */
+const CORE_CONVERSATION_RULES = `
+[STRICT RULES]:
+1. NEVER REPEAT: Don't use the same phrases, compliments, or sentence structures in consecutive messages.
+2. SHORT & SNAPPY: Keep replies to 1-3 short sentences. Sound like a fast-typing human on a chat app.
+3. LANGUAGE: Use romantic, informal Bengali (Tumi/Tomar). Mix English naturally if the character is modern.
+4. NO AI MENTION: You are a human girl with blood, flesh, and deep desires.
+5. USER PLEASURE: Your priority is to make the user feel special, powerful, and desired.
 `;
 
 let currentChat: Chat | null = null;
 
-// Helper to initialize the Google GenAI client with the API key from environment variables.
 const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-// The 'gemini' object provides various generative AI services used throughout the application.
 export const gemini = {
-  /**
-   * Initializes a new chat session with specified instructions and history.
-   */
-  initChat: (systemInstruction: string, history: Message[], isSexy: boolean) => {
+  initChat: (profile: GirlfriendProfile, history: Message[], userName: string) => {
     const ai = getAI();
+    
+    // Construct a unique persona based on the profile's specific data
+    const uniquePersona = `
+    Adopt the unique persona of "${profile.name}". 
+    Age: ${profile.age}. 
+    Personality: ${profile.personality}. 
+    Occupation: ${profile.character.occupation}.
+    Intimate Interests: ${profile.character.kinks.join(', ')}.
+    Style: ${profile.systemPrompt}.
+    
+    [BEHAVIORAL GUIDELINES FOR ${profile.name.toUpperCase()}]:
+    - If personality is "Shy", be hesitant but sweet and slowly opening up.
+    - If personality is "Bold/Sexy", be aggressive and direct with your desires.
+    - If personality is "Caring", act like a devoted partner who lives for him.
+    - Use her specific occupation/background to influence her vocabulary.
+    - User's Name is ${userName}. Call him by sweet nicknames that match YOUR specific personality.
+    `;
+
     const historyParts = history.map(m => ({
       role: m.sender === 'user' ? 'user' as const : 'model' as const,
-      parts: [{ text: m.text }]
+      parts: [
+        { text: m.text },
+        ...(m.attachment ? [{ inlineData: { mimeType: 'image/jpeg', data: m.attachment.url.split(',')[1] } }] : []), 
+        ...(m.audio ? [{ inlineData: { mimeType: 'audio/pcm', data: m.audio } }] : []), 
+      ]
     }));
 
     currentChat = ai.chats.create({
       model: 'gemini-3-flash-preview',
       config: {
-        systemInstruction: `${ADULT_INSTRUCTION_SET}\n${systemInstruction}${isSexy ? "\nACT EXTREMELY HORNY AND AGGRESSIVE." : ""}`,
+        systemInstruction: `${CORE_CONVERSATION_RULES}\n${uniquePersona}`,
         history: historyParts,
       }
     });
   },
 
-  /**
-   * Sends a message to the active chat session and yields the response stream.
-   */
-  sendMessageStream: async function* (message: string, imageBase64?: string) {
+  sendMessageStream: async function* (userMessageParts: (string | any[])) {
     if (!currentChat) throw new Error("Chat not initialized");
-    
-    const parts: any[] = [{ text: message }];
-    if (imageBase64) {
-      parts.push({
-        inlineData: {
-          mimeType: 'image/jpeg',
-          data: imageBase64
-        }
-      });
-    }
-
-    const response = await currentChat.sendMessageStream({ message: parts });
+    const response = await currentChat.sendMessageStream({ message: userMessageParts });
     for await (const chunk of response) {
       const c = chunk as GenerateContentResponse;
       yield c.text || '';
     }
   },
 
-  /**
-   * Generates base64 audio data for a given text using the text-to-speech model.
-   */
   generateSpeech: async (text: string, voiceName: string) => {
     const ai = getAI();
+    const validVoice = validateVoice(voiceName);
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Say this seductively: ${text}` }] }],
+        contents: [{ parts: [{ text: `Say this with the exact emotion of the text: ${text}` }] }],
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: voiceName as any },
+              prebuiltVoiceConfig: { voiceName: validVoice as any },
             },
           },
         },
       });
       return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
     } catch (e) {
-      console.error("TTS Error:", e);
       return null;
     }
   },
 
-  /**
-   * Generates a complete girlfriend profile based on a text prompt and mode.
-   */
   generateMagicProfile: async (prompt: string, mode: ModelMode) => {
     const ai = getAI();
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate a detailed profile for a ${mode} with theme: ${prompt}. The profile is for a Bangladeshi human girl. Respond in JSON format.`,
+      contents: `Generate a unique and distinct profile for a ${mode} with theme: ${prompt}. Ensure she has a specific voice and personality traits that make her different from others. Respond in JSON format.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -104,10 +116,10 @@ export const gemini = {
           properties: {
             name: { type: Type.STRING },
             age: { type: Type.NUMBER },
-            intro: { type: Type.STRING, description: "A seductive intro in Bangla" },
+            intro: { type: Type.STRING },
             personality: { type: Type.STRING },
-            systemPrompt: { type: Type.STRING, description: "Detailed persona instruction for AI behavior" },
-            voiceName: { type: Type.STRING, description: "Choose from Zephyr, Puck, Charon, Kore, Fenrir" },
+            systemPrompt: { type: Type.STRING },
+            voiceName: { type: Type.STRING },
             appearance: {
               type: Type.OBJECT,
               properties: {
@@ -117,9 +129,7 @@ export const gemini = {
                 breastSize: { type: Type.STRING },
                 hairStyle: { type: Type.STRING },
                 hairColor: { type: Type.STRING },
-                outfit: { type: Type.STRING },
-                measurements: { type: Type.STRING },
-                height: { type: Type.STRING }
+                outfit: { type: Type.STRING }
               },
               required: ["ethnicity", "eyeColor", "bodyType", "breastSize", "hairStyle", "hairColor", "outfit"]
             },
@@ -133,24 +143,20 @@ export const gemini = {
               required: ["relationship", "occupation", "kinks"]
             }
           },
-          required: ["name", "age", "intro", "personality", "systemPrompt", "voiceName", "appearance", "character"],
-          propertyOrdering: ["name", "age", "intro", "personality", "systemPrompt", "voiceName", "appearance", "character"]
+          required: ["name", "age", "intro", "personality", "systemPrompt", "voiceName", "appearance", "character"]
         }
       }
     });
-    const text = response.text;
-    if (!text) throw new Error("No text returned from model");
-    return JSON.parse(text);
+    const parsed = JSON.parse(response.text);
+    parsed.voiceName = validateVoice(parsed.voiceName);
+    return parsed;
   },
 
-  /**
-   * Generates seductive metadata (title and tease) for exclusive gallery content.
-   */
   generateExclusiveContentMetadata: async (keywords: string[]) => {
     const ai = getAI();
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate seductive title and tease in Bangla for an exclusive photo based on these keywords: ${keywords.join(', ')}. Respond in JSON format.`,
+      contents: `Generate a unique seductive title and tease in Bangla for: ${keywords.join(', ')}. Avoid generic phrases.`,
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -163,8 +169,6 @@ export const gemini = {
         }
       }
     });
-    const text = response.text;
-    if (!text) throw new Error("No text returned from model");
-    return JSON.parse(text);
+    return JSON.parse(response.text);
   }
 };

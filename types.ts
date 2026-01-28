@@ -97,6 +97,7 @@ export interface Message {
     type: 'image';
     url: string;
   };
+  audio?: string; // Added for AI voice replies (base64 encoded audio)
 }
 
 export type ViewState = 
