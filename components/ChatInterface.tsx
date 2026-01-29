@@ -28,7 +28,7 @@ const decodeAudio = (base64: string) => {
 };
 
 const formatSeductiveText = (text: string) => {
-  const hotWords = ['ভালোবাসি', 'জানু', 'গরম', 'আদর', 'নিচে', 'ভেজা', 'পাগল', 'সেক্সি', 'জান', 'body', 'wet', 'naked', 'দুধ', 'বুক', 'খুলবো', 'চরম', 'তৃপ্তি', 'নগ্ন', 'কামনা', 'নুনু', 'সাইজ'];
+  const hotWords = ['ভালোবাসি', 'জানু', 'গরম', 'আদর', 'নিচে', 'ভেজা', 'পাগল', 'সেক্সি', 'জান', 'body', 'wet', 'naked', 'দুধ', 'বুক', 'খুলবো', 'চরম', 'তৃপ্তি', 'নগ্ন', 'কামনা', 'নুনু', 'সাইজ', 'বুদা', 'সোনা', 'পেনিস', 'চোষা', 'মাল', 'আউট'];
   const parts = text.split(new RegExp(`(${hotWords.join('|')})`, 'gi'));
   return (
     <span>
@@ -56,18 +56,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const audioContextRef = useRef<AudioContext | null>(null);
 
   useEffect(() => {
-    // PASS FULL PROFILE OBJECT FOR PERSONALITY UNIQUENESS
-    gemini.initChat(profile, history, userName);
-    if (history.length === 0) {
+    const profileHistory = history.filter(m => (m as any).modelId === profile.id || m.id === 'welcome');
+    gemini.initChat(profile, profileHistory, userName);
+    if (profileHistory.length === 0) {
       setMessages([{ id: 'welcome', sender: 'ai', text: profile.intro, timestamp: new Date() }]);
-    } else setMessages(history);
+    } else {
+      setMessages(profileHistory);
+    }
 
     return () => {
       if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
         audioContextRef.current.close().catch(console.error);
       }
     };
-  }, [profile]);
+  }, [profile.id]);
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, isTyping, suggestedContent]);
 
@@ -105,9 +107,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       timestamp: new Date(),
       attachment: imageBase64 ? { type: 'image', url: `data:image/jpeg;base64,${imageBase64}` } : undefined
     };
+    (userMsg as any).modelId = profile.id;
     
-    const updated = [...messages, userMsg];
-    setMessages(updated);
+    const currentMessages = [...messages, userMsg];
+    setMessages(currentMessages);
     setInputText('');
     setIsTyping(true);
     setSuggestedContent(null);
@@ -117,16 +120,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       const aiMsgId = (Date.now() + 1).toString();
       
       if (isVoiceReplyEnabled) {
-        setMessages([...updated, { id: aiMsgId, sender: 'ai', text: '', timestamp: new Date(), audio: 'generating' as any }]);
+        setMessages([...currentMessages, { id: aiMsgId, sender: 'ai', text: '', timestamp: new Date(), audio: 'generating' as any }]);
       } else {
-        setMessages([...updated, { id: aiMsgId, sender: 'ai', text: '', timestamp: new Date() }]);
+        setMessages([...currentMessages, { id: aiMsgId, sender: 'ai', text: '', timestamp: new Date() }]);
       }
 
       const userMessageParts: any[] = [{ text: userMsg.text }];
       if (userMsg.attachment) {
-        userMessageParts.push({
-          inlineData: { mimeType: 'image/jpeg', data: userMsg.attachment.url.split(',')[1] }
-        });
+        userMessageParts.push({ inlineData: { mimeType: 'image/jpeg', data: userMsg.attachment.url.split(',')[1] } });
       }
 
       const stream = gemini.sendMessageStream(userMessageParts);
@@ -146,18 +147,23 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         }
       }
 
-      setMessages(prev => prev.map(m => m.id === aiMsgId ? { ...m, text: aiFullText, audio: aiAudioData } : m));
+      const finalAiMsg: Message = { id: aiMsgId, sender: 'ai', text: aiFullText, timestamp: new Date(), audio: aiAudioData };
+      (finalAiMsg as any).modelId = profile.id;
+
+      setMessages(prev => prev.map(m => m.id === aiMsgId ? finalAiMsg : m));
       
       const lowerInput = userMsg.text.toLowerCase();
+      const needsNaughty = ['hot', 'sexy', 'photo', 'video', 'chobi', 'body', 'naked', 'shout', 'dekhaw', 'দেখাও', 'ছবি', 'ভিডিও', 'বুদা', 'চোষা', 'মাল'];
       const match = profile.gallery.find(item => 
-        item.isExclusive && item.keywords?.some(k => lowerInput.includes(k.toLowerCase()))
+        item.isExclusive && (needsNaughty.some(k => lowerInput.includes(k)) || item.keywords?.some(k => lowerInput.includes(k.toLowerCase())))
       );
       
       if (match) setSuggestedContent(match);
-      onSaveHistory([...updated, { id: aiMsgId, sender: 'ai', text: aiFullText, timestamp: new Date(), audio: aiAudioData }]);
+      onSaveHistory([...history, userMsg, finalAiMsg]);
 
     } catch (error) {
       console.error(error);
+      setIsTyping(false);
     } finally { setIsTyping(false); }
   };
 
@@ -181,13 +187,16 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     const success = await onUnlockContent(item.id, item.creditCost || 0);
     if (success) {
         setSuggestedContent(null);
-        setMessages(prev => [...prev, { 
+        const unlockMsg: Message = { 
           id: `unl_${Date.now()}`, 
           sender: 'ai', 
-          text: `জান, তোমার জন্য ওটা আনলক করলাম... কেমন লেগেছে? 🔥`, 
+          text: `জান, তোমার জন্য পাঠালাম... কেমন লেগেছে? 🔥`, 
           timestamp: new Date(), 
           attachment: { type: 'image', url: item.url } 
-        }]);
+        };
+        (unlockMsg as any).modelId = profile.id;
+        setMessages(prev => [...prev, unlockMsg]);
+        onSaveHistory([...history, unlockMsg]);
     }
   };
 
@@ -195,7 +204,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     <div className="flex flex-col h-full w-full relative overflow-hidden font-['Hind_Siliguri'] bg-slate-950">
       <div className="absolute inset-0 bg-gradient-to-b from-[#1a0b2e] via-[#0f0518] to-black"></div>
       
-      {/* Header */}
       <div className="px-4 py-4 flex items-center justify-between z-30 bg-slate-900/60 backdrop-blur-3xl border-b border-white/5 shadow-2xl">
         <div className="flex items-center gap-4">
           <button onClick={onBack} className="p-3 bg-white/5 rounded-full text-gray-400 hover:text-white transition-all"><svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg></button>
@@ -206,7 +214,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
              </div>
              <div>
                 <h2 className="font-black text-white text-xl">{profile.name}</h2>
-                <p className="text-[10px] text-pink-400 font-bold uppercase tracking-widest">{isTyping ? 'মডেল কিছু বলছে...' : 'অ্যাক্টিভ 🔥'}</p>
+                <p className="text-[10px] text-pink-400 font-bold uppercase tracking-widest">{isTyping ? 'জান কিছু বলছে...' : 'অ্যাক্টিভ 🔥'}</p>
              </div>
           </div>
         </div>
@@ -215,7 +223,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               <button 
                 onClick={() => setIsVoiceReplyEnabled(!isVoiceReplyEnabled)} 
                 className={`h-12 w-12 rounded-full flex items-center justify-center transition-all ${isVoiceReplyEnabled ? 'bg-pink-600 text-white shadow-[0_0_20px_rgba(236,72,153,0.4)] animate-pulse' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
-                title={isVoiceReplyEnabled ? "Voice Only: ON" : "Voice Only: OFF"}
+                title={isVoiceReplyEnabled ? "Voice Mode: ON" : "Voice Mode: OFF"}
               >
                 <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>
               </button>
@@ -224,8 +232,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         </div>
       </div>
 
-      {/* Chat Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-10 z-10 scroll-smooth pb-32 pt-2">
+      <div className="flex-1 overflow-y-auto p-4 space-y-10 z-10 scroll-smooth pb-32 pt-2 custom-scrollbar">
         {messages.map((m) => {
           const isAIVoiceMsg = m.sender === 'ai' && isVoiceReplyEnabled;
           const isGenerating = m.audio === 'generating';
@@ -244,7 +251,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                                 <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
                                     <div className="h-full bg-pink-500 w-1/3 animate-[shimmer_1.5s_infinite] origin-left"></div>
                                 </div>
-                                <p className="text-[10px] text-pink-500 font-black uppercase tracking-[0.1em]">রেকর্ড করছি শোনো...</p>
+                                <p className="text-[10px] text-pink-500 font-black uppercase tracking-[0.1em]">রেকর্ড করছি জান...</p>
                             </div>
                         </div>
                       ) : m.audio ? (
@@ -257,17 +264,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                               {[...Array(15)].map((_, i) => <div key={i} className="flex-1 bg-pink-500/40 rounded-full animate-pulse" style={{ height: `${20 + Math.random() * 80}%` }}></div>)}
                             </div>
                           </div>
-                          <p className="text-[9px] text-pink-500 font-black uppercase tracking-[0.2em] text-center bg-pink-500/5 py-1 rounded-full">ভয়েস রিপ্লাই (Tap to play)</p>
+                          <p className="text-[9px] text-pink-500 font-black uppercase tracking-[0.2em] text-center bg-pink-500/5 py-1 rounded-full">ভয়েস মেসেজ (Tap to play)</p>
                         </div>
-                      ) : (
-                        formatSeductiveText(m.text)
-                      )}
+                      ) : null}
                     </div>
                   ) : (
                     m.sender === 'ai' ? formatSeductiveText(m.text) : m.text
                   )}
 
-                  {m.attachment && <img src={m.attachment.url} className="mt-4 rounded-xl max-w-full h-auto shadow-lg border border-white/10" />}
+                  {m.attachment && <img src={m.attachment.url} className="mt-4 rounded-xl max-w-full h-auto shadow-lg border border-white/10" alt="Attachment" />}
                   
                   {!isAIVoiceMsg && m.sender === 'ai' && m.audio && (
                      <button onClick={() => playAiVoice(m.audio!)} className="absolute -bottom-2 -right-2 h-10 w-10 bg-pink-600 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-110 active:scale-90 transition-all border-2 border-white/10">
@@ -298,8 +303,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="p-6 z-20 absolute bottom-0 left-0 w-full bg-gradient-to-t from-black via-black/80 to-transparent">
+      <div className="p-6 z-20 bg-gradient-to-t from-black via-black/80 to-transparent">
         <form onSubmit={handleSend} className="bg-white/10 backdrop-blur-3xl border border-white/20 rounded-[2.5rem] p-2 flex items-center shadow-2xl group focus-within:border-pink-500/50 transition-all">
           <button type="button" onClick={() => fileInputRef.current?.click()} className="h-12 w-12 rounded-full bg-white/5 flex items-center justify-center text-gray-400 hover:text-white transition-all"><svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" /></svg></button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="image/*" className="hidden" />
@@ -319,7 +323,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       `}</style>
 
       {showVoiceCall && <VoiceCallModal profile={profile} onClose={() => setShowVoiceCall(false)} userCredits={userCredits} onPurchaseCredits={onPurchaseCredits} onUnlockContent={onUnlockContent} />}
-      {fullScreenImage && <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center" onClick={() => setFullScreenImage(null)}><img src={fullScreenImage} className="max-w-full max-h-full" /></div>}
+      {fullScreenImage && <div className="fixed inset-0 z-[100] bg-black/95 flex items-center justify-center" onClick={() => setFullScreenImage(null)}><img src={fullScreenImage} className="max-w-full max-h-full" alt="Fullscreen" /></div>}
     </div>
   );
 };

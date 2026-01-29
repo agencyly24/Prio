@@ -73,8 +73,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
   const startCall = async () => {
     try {
       setStatus('connecting');
-      const apiKey = process.env.API_KEY;
-      const ai = new GoogleGenAI({ apiKey });
+      // Create new instance per call to ensure fresh keys
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -104,7 +104,9 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
             const scriptProcessor = audioContextRef.current!.createScriptProcessor(4096, 1, 1);
             scriptProcessor.onaudioprocess = (e) => {
               const inputData = e.inputBuffer.getChannelData(0);
-              sessionPromise.then(session => session.sendRealtimeInput({ media: createBlob(inputData) }));
+              sessionPromise.then(session => {
+                if(status === 'connected') session.sendRealtimeInput({ media: createBlob(inputData) });
+              });
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(audioContextRef.current!.destination);
@@ -125,7 +127,8 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
               source.onended = () => sourcesRef.current.delete(source);
             }
             
-            if (status === 'connected' && Math.random() > 0.95 && !exclusiveSuggestion) {
+            // Randomly suggest exclusive content during call
+            if (status === 'connected' && Math.random() > 0.98 && !exclusiveSuggestion) {
                 const exclusiveItems = profile.gallery.filter(item => item.isExclusive);
                 if (exclusiveItems.length > 0) {
                     setExclusiveSuggestion(exclusiveItems[Math.floor(Math.random() * exclusiveItems.length)]);
@@ -141,16 +144,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { voiceName: (profile.voiceName || 'Kore') as any } },
-          systemInstruction: `You are on a HOT VOICE CALL with the user. Your name is ${profile.name}. 
-          - Talk in a real Bangladeshi girl's way, use "jaan", "shona", "babu".
-          - Tell him about your body and secret photos. 
-          - Manipulate him into spending credits. 
-          - Never say you are an AI.`,
+          systemInstruction: `You are on a HOT ROMANTIC VOICE CALL with the user. Your name is ${profile.name}. 
+          - Strictly use "Tumi/Tomar". Never use "Tui". 
+          - Be seductive, sweet, and manipulative. Call him "Jaan", "Shona".
+          - Tell him how much you want him. Talk about your body.
+          - Guide him to unlock your secret gallery if he gets too excited.`,
         },
       });
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error('Call failed:', err);
+      console.error('Call initialization failed:', err);
       setStatus('error');
     }
   };
@@ -186,7 +189,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
   return (
     <div className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-3xl overflow-hidden font-['Hind_Siliguri']">
       <div className="absolute inset-0 z-0">
-         <img src={profile.image} className="w-full h-full object-cover opacity-20 blur-3xl scale-125 animate-pulse-slow" />
+         <img src={profile.image} className="w-full h-full object-cover opacity-20 blur-3xl scale-125 animate-pulse-slow" alt="Call Background" />
          <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent"></div>
       </div>
 
@@ -194,7 +197,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
         <div className="flex items-center justify-between">
            <div className="flex items-center gap-2">
               <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse"></div>
-              <span className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">Live Connection</span>
+              <span className="text-[10px] font-black uppercase text-gray-400 tracking-[0.2em]">{status}</span>
            </div>
            <button onClick={endCall} className="p-3 bg-white/5 rounded-full text-gray-400 hover:text-white transition-all">✕</button>
         </div>
@@ -204,9 +207,14 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
                 <div className="absolute inset-[-40px] rounded-full border border-pink-500/20" style={{ transform: `scale(${1 + volume * 0.8})`, opacity: volume * 0.6 }}></div>
                 <div className="absolute inset-[-80px] rounded-full border border-pink-500/10" style={{ transform: `scale(${1 + volume * 1.5})`, opacity: volume * 0.3 }}></div>
                 
-                <div className="w-56 h-56 md:w-72 md:h-72 rounded-full p-2 bg-gradient-to-br from-pink-500 to-purple-600 shadow-2xl relative z-10 overflow-hidden">
-                    <img src={profile.image} className={`w-full h-full rounded-full object-cover transition-transform duration-500 ${status === 'connected' ? 'scale-110' : 'scale-100'}`} />
-                    {status !== 'connected' && <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center font-black text-xs uppercase tracking-widest text-white">Connecting...</div>}
+                <div className="w-56 h-56 md:w-72 md:h-72 rounded-full p-2 bg-gradient-to-br from-pink-500 to-purple-600 shadow-2xl relative z-10 overflow-hidden border-4 border-white/10">
+                    <img src={profile.image} className={`w-full h-full rounded-full object-cover transition-transform duration-500 ${status === 'connected' ? 'scale-110' : 'scale-100'}`} alt={profile.name} />
+                    {status !== 'connected' && (
+                        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center font-black text-xs uppercase tracking-widest text-white">
+                            <div className="h-8 w-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-4"></div>
+                            {status === 'connecting' ? 'কানেক্ট করছি...' : 'আবার চেষ্টা করছি...'}
+                        </div>
+                    )}
                 </div>
             </div>
             
@@ -216,13 +224,16 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
                     {status === 'connected' ? (
                        <div className="flex items-center gap-3">
                            <div className="px-3 py-1 bg-pink-600/20 rounded-full border border-pink-500/30">
-                              <span className="text-pink-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Call In Progress 🔥</span>
+                              <span className="text-pink-400 font-black text-[10px] uppercase tracking-widest animate-pulse">Call Live 🔥</span>
                            </div>
                            <p className="text-2xl font-mono text-white/80 tabular-nums font-bold">{(callDuration / 60).toFixed(0).padStart(2, '0')}:{(callDuration % 60).toString().padStart(2, '0')}</p>
                        </div>
-                    ) : (
-                       <p className="text-gray-500 font-black text-xs uppercase tracking-widest">বসাচ্ছি...</p>
-                    )}
+                    ) : status === 'error' ? (
+                       <div className="text-red-500 font-black uppercase tracking-widest text-xs flex flex-col gap-4">
+                          <span>কানেকশনে সমস্যা হয়েছে জান!</span>
+                          <button onClick={() => startCall()} className="px-6 py-2 bg-white/10 rounded-full border border-white/10">আবার চেষ্টা করো</button>
+                       </div>
+                    ) : null}
                 </div>
             </div>
         </div>
@@ -234,7 +245,7 @@ export const VoiceCallModal: React.FC<VoiceCallModalProps> = ({ profile, onClose
                     
                     <div className="bg-[#0f0518] rounded-[2.8rem] overflow-hidden p-6 flex items-center gap-6">
                         <div className="relative h-28 w-28 md:h-32 md:w-32 flex-shrink-0 rounded-3xl overflow-hidden border border-white/10">
-                            <img src={exclusiveSuggestion.url} className={`w-full h-full object-cover ${exclusiveSuggestion.isExclusive ? 'blur-2xl scale-125 brightness-50' : 'animate-in zoom-in'}`} />
+                            <img src={exclusiveSuggestion.url} className={`w-full h-full object-cover ${exclusiveSuggestion.isExclusive ? 'blur-2xl scale-125 brightness-50' : 'animate-in zoom-in'}`} alt="Tease" />
                         </div>
                         <div className="flex-1 text-left">
                             <h4 className="text-white font-black text-lg md:text-xl mb-2 line-clamp-1">"{exclusiveSuggestion.title || 'আমার গোপন ছবি...'}"</h4>

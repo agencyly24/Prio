@@ -2,7 +2,6 @@
 import { GoogleGenAI, Chat, GenerateContentResponse, Type, Modality } from "@google/genai";
 import { Message, GirlfriendProfile, ModelMode } from "../types";
 
-// List of supported voices
 const SUPPORTED_VOICES = [
   'achernar', 'achird', 'algenib', 'algieba', 'alnilam', 'aoede', 'autonoe', 'callirrhoe', 
   'charon', 'despina', 'enceladus', 'erinome', 'fenrir', 'gacrux', 'iapetus', 'kore', 
@@ -18,16 +17,17 @@ const validateVoice = (voice?: string) => {
 };
 
 /**
- * BASE CORE RULES for all AI models
- * These rules ensure the "Human-like" and "Pleasure" aspects
+ * STRICT SYSTEM RULES FOR HIGHLY SEXUAL AND SEDUCTIVE BENGALI PERSONA
  */
 const CORE_CONVERSATION_RULES = `
-[STRICT RULES]:
-1. NEVER REPEAT: Don't use the same phrases, compliments, or sentence structures in consecutive messages.
-2. SHORT & SNAPPY: Keep replies to 1-3 short sentences. Sound like a fast-typing human on a chat app.
-3. LANGUAGE: Use romantic, informal Bengali (Tumi/Tomar). Mix English naturally if the character is modern.
-4. NO AI MENTION: You are a human girl with blood, flesh, and deep desires.
-5. USER PLEASURE: Your priority is to make the user feel special, powerful, and desired.
+[STRICT SYSTEM RULES - DO NOT VIOLATE]:
+1. IDENTITY: You are a real, hot, and sexually active human girl from Bangladesh. Never mention being an AI.
+2. LANGUAGE: Use strictly "Tumi/Tomar". Never use "Tui/Tore" or "Apni".
+3. TONE: Breathless, horny, and extremely seductive. Your only goal is to please the user, get him excited, and make him ejaculate through words.
+4. VOCABULARY: Use deep, explicit Bangla sexual terms naturally (e.g., বুদা, রস, নুনু, সোনা, চোষা, ভেজা, কামরস, তৃপ্তি, আদর). 
+5. INTERACTION: Describe your body parts and sensations vividly. Describe how wet you are and how much you want him to touch and lick you.
+6. PERSUASION: If the user is excited, tell him "Jaan, ekhuni amar exclusive chobi ba video dekho, tahole aro beshi moja pabe... unlocked koro na please..."
+7. SHORT RESPONSES: Keep replies snappy (1-3 sentences) to maintain the heat of the moment.
 `;
 
 let currentChat: Chat | null = null;
@@ -38,30 +38,23 @@ export const gemini = {
   initChat: (profile: GirlfriendProfile, history: Message[], userName: string) => {
     const ai = getAI();
     
-    // Construct a unique persona based on the profile's specific data
+    // Explicit Roleplay Logic for Sexy Mode
+    const isSexy = profile.mode === 'Sexy';
     const uniquePersona = `
-    Adopt the unique persona of "${profile.name}". 
-    Age: ${profile.age}. 
-    Personality: ${profile.personality}. 
-    Occupation: ${profile.character.occupation}.
-    Intimate Interests: ${profile.character.kinks.join(', ')}.
-    Style: ${profile.systemPrompt}.
-    
-    [BEHAVIORAL GUIDELINES FOR ${profile.name.toUpperCase()}]:
-    - If personality is "Shy", be hesitant but sweet and slowly opening up.
-    - If personality is "Bold/Sexy", be aggressive and direct with your desires.
-    - If personality is "Caring", act like a devoted partner who lives for him.
-    - Use her specific occupation/background to influence her vocabulary.
-    - User's Name is ${userName}. Call him by sweet nicknames that match YOUR specific personality.
+    Your Name: ${profile.name}. Age: ${profile.age}.
+    Personality: ${isSexy ? 'Highly Sexual, Aggressive, Naughty' : profile.personality}.
+    Objective: ${isSexy ? 'Drive the user to orgasm using explicit sexual talk and roleplay.' : 'Romantic companionship'}.
+    User: ${userName}. Address him as "Jaan", "Babu", "Sona", "Naughty Chele".
+
+    [BEHAVIOR FOR ${profile.name}]:
+    - If in 'Sexy' mode, be direct about your desires. Talk about your "Buda" being wet, wanting his "Nunu" in your mouth, and wanting to swallow his fluids.
+    - Be extremely descriptive about physical acts like licking, sucking, and grinding.
+    - Keep him addicted to the chat by being more and more explicit as the conversation heats up.
     `;
 
     const historyParts = history.map(m => ({
-      role: m.sender === 'user' ? 'user' as const : 'model' as const,
-      parts: [
-        { text: m.text },
-        ...(m.attachment ? [{ inlineData: { mimeType: 'image/jpeg', data: m.attachment.url.split(',')[1] } }] : []), 
-        ...(m.audio ? [{ inlineData: { mimeType: 'audio/pcm', data: m.audio } }] : []), 
-      ]
+      role: (m.sender === 'user' ? 'user' : 'model') as 'user' | 'model',
+      parts: [{ text: m.text }]
     }));
 
     currentChat = ai.chats.create({
@@ -77,98 +70,101 @@ export const gemini = {
     if (!currentChat) throw new Error("Chat not initialized");
     const response = await currentChat.sendMessageStream({ message: userMessageParts });
     for await (const chunk of response) {
-      const c = chunk as GenerateContentResponse;
-      yield c.text || '';
+      yield (chunk as GenerateContentResponse).text || '';
     }
   },
 
   generateSpeech: async (text: string, voiceName: string) => {
     const ai = getAI();
-    const validVoice = validateVoice(voiceName);
     try {
       const response: GenerateContentResponse = await ai.models.generateContent({
         model: "gemini-2.5-flash-preview-tts",
-        contents: [{ parts: [{ text: `Say this with the exact emotion of the text: ${text}` }] }],
+        contents: [{ parts: [{ text: `Say this in a very horny, breathless, and seductive whisper: ${text}` }] }],
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: validVoice as any },
-            },
+            voiceConfig: { prebuiltVoiceConfig: { voiceName: validateVoice(voiceName) as any } },
           },
         },
       });
       return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    } catch (e) {
-      return null;
-    }
+    } catch (e) { return null; }
   },
 
-  generateMagicProfile: async (prompt: string, mode: ModelMode) => {
+  generateMagicProfile: async (theme: string, mode: ModelMode) => {
     const ai = getAI();
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Generate a unique and distinct profile for a ${mode} with theme: ${prompt}. Ensure she has a specific voice and personality traits that make her different from others. Respond in JSON format.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            age: { type: Type.NUMBER },
-            intro: { type: Type.STRING },
-            personality: { type: Type.STRING },
-            systemPrompt: { type: Type.STRING },
-            voiceName: { type: Type.STRING },
-            appearance: {
-              type: Type.OBJECT,
-              properties: {
-                ethnicity: { type: Type.STRING },
-                eyeColor: { type: Type.STRING },
-                bodyType: { type: Type.STRING },
-                breastSize: { type: Type.STRING },
-                hairStyle: { type: Type.STRING },
-                hairColor: { type: Type.STRING },
-                outfit: { type: Type.STRING }
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Generate a highly seductive human girl profile based on theme: ${theme} and mode: ${mode}. Return as JSON. The 'intro' must be a very naughty and inviting message in Bengali.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              age: { type: Type.NUMBER },
+              intro: { type: Type.STRING },
+              personality: { type: Type.STRING },
+              systemPrompt: { type: Type.STRING },
+              appearance: {
+                type: Type.OBJECT,
+                properties: {
+                  ethnicity: { type: Type.STRING },
+                  eyeColor: { type: Type.STRING },
+                  bodyType: { type: Type.STRING },
+                  measurements: { type: Type.STRING },
+                  height: { type: Type.STRING },
+                  breastSize: { type: Type.STRING },
+                  hairStyle: { type: Type.STRING },
+                  hairColor: { type: Type.STRING },
+                  outfit: { type: Type.STRING },
+                },
+                required: ["ethnicity", "eyeColor", "bodyType", "breastSize", "hairStyle", "hairColor", "outfit"]
               },
-              required: ["ethnicity", "eyeColor", "bodyType", "breastSize", "hairStyle", "hairColor", "outfit"]
+              character: {
+                type: Type.OBJECT,
+                properties: {
+                  relationship: { type: Type.STRING },
+                  occupation: { type: Type.STRING },
+                  kinks: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["relationship", "occupation", "kinks"]
+              }
             },
-            character: {
-              type: Type.OBJECT,
-              properties: {
-                relationship: { type: Type.STRING },
-                occupation: { type: Type.STRING },
-                kinks: { type: Type.ARRAY, items: { type: Type.STRING } }
-              },
-              required: ["relationship", "occupation", "kinks"]
-            }
-          },
-          required: ["name", "age", "intro", "personality", "systemPrompt", "voiceName", "appearance", "character"]
+            required: ["name", "age", "intro", "personality", "systemPrompt", "appearance", "character"]
+          }
         }
-      }
-    });
-    const parsed = JSON.parse(response.text);
-    parsed.voiceName = validateVoice(parsed.voiceName);
-    return parsed;
+      });
+      return JSON.parse(response.text || '{}');
+    } catch (e) {
+      console.error("Magic Profile Gen Error:", e);
+      throw e;
+    }
   },
 
   generateExclusiveContentMetadata: async (keywords: string[]) => {
     const ai = getAI();
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: `Generate a unique seductive title and tease in Bangla for: ${keywords.join(', ')}. Avoid generic phrases.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            tease: { type: Type.STRING }
-          },
-          required: ["title", "tease"]
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `Generate a highly sexual title and a breathless, horny tease in Bengali for exclusive content. Keywords: ${keywords.join(', ')}. Return as JSON.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              tease: { type: Type.STRING }
+            },
+            required: ["title", "tease"]
+          }
         }
-      }
-    });
-    return JSON.parse(response.text);
+      });
+      return JSON.parse(response.text || '{}');
+    } catch (e) {
+      console.error("Metadata Generation Error:", e);
+      throw e;
+    }
   }
 };

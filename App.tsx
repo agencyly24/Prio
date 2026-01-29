@@ -2,13 +2,10 @@
 import React, { useState, useEffect } from 'react';
 import { Layout3D, Card3D, Button3D } from './components/Layout3D';
 import { PurchasePopup } from './components/PurchasePopup';
-// Fixed: Model is not exported from types, using GirlfriendProfile instead
-import { UserProfile, ViewState, GirlfriendProfile, Purchase, PaymentRequest } from './types';
+import { UserProfile, ViewState, GirlfriendProfile, Purchase, PaymentRequest, Message } from './types';
 import { cloudStore } from './services/cloudStore';
 import { auth } from './services/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
-import { PACKAGES, CREDIT_PACKAGES } from './constants';
-import { gemini } from './services/geminiService';
 import { AuthScreen } from './components/AuthScreen';
 import { ProfileDetail } from './components/ProfileDetail';
 import { ChatInterface } from './components/ChatInterface';
@@ -16,8 +13,6 @@ import { SubscriptionPlans } from './components/SubscriptionPlans';
 import { UserAccount } from './components/UserAccount';
 import { AdminPanel } from './components/AdminPanel';
 import { CreditPurchaseModal } from './components/CreditPurchaseModal';
-
-// --- SUB-COMPONENTS ---
 
 const Landing = ({ onLogin }: any) => (
   <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center relative overflow-hidden">
@@ -38,7 +33,6 @@ const Landing = ({ onLogin }: any) => (
 const Dashboard = ({ models, unlockedModels, setView, onSelectModel, userCredits, packageId }: any) => {
   return (
     <div className="p-4 md:p-8 max-w-[1600px] mx-auto min-h-screen flex flex-col justify-center">
-       
        <div className="flex justify-between items-center mb-12 relative z-10 px-2 mt-16">
           <div>
             <h1 className="text-4xl md:text-6xl font-black text-slate-900 tracking-tighter drop-shadow-sm">
@@ -63,7 +57,6 @@ const Dashboard = ({ models, unlockedModels, setView, onSelectModel, userCredits
           </div>
        ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8 relative z-10 pb-20">
-              {/* Fixed: Model type replaced with GirlfriendProfile */}
               {models.filter((m: any) => m.active !== false).map((model: GirlfriendProfile, idx: number) => {
                 const safeUnlocked = unlockedModels || [];
                 const isVIP = packageId === 'package3';
@@ -109,12 +102,11 @@ const Dashboard = ({ models, unlockedModels, setView, onSelectModel, userCredits
 };
 
 const App: React.FC = () => {
-  // Fixed: Model type replaced with GirlfriendProfile
   const [user, setUser] = useState<UserProfile | null>(null);
   const [view, setView] = useState<ViewState>('landing');
   const [models, setModels] = useState<GirlfriendProfile[]>([]);
   const [selectedModel, setSelectedModel] = useState<GirlfriendProfile | null>(null);
-  const [chatHistory, setChatHistory] = useState<any[]>([]);
+  const [chatHistory, setChatHistory] = useState<Message[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<PaymentRequest[]>([]);
   const [showSuccessPopup, setShowSuccessPopup] = useState(false);
   const [showCreditModal, setShowCreditModal] = useState(false);
@@ -137,8 +129,7 @@ const App: React.FC = () => {
 
   const handlePaymentSubmission = async (req: any) => {
     if (!user) return;
-    
-    const purchase: any = {
+    const purchase: Purchase = {
        id: `pur_${Date.now()}`,
        uid: user.uid,
        userName: user.name || user.email || 'Anonymous User',
@@ -149,34 +140,21 @@ const App: React.FC = () => {
        bkashNumber: req.bkashNumber || '',
        transactionId: req.trxId || '',
        createdAt: new Date().toISOString(),
+       tier: req.tier,
+       creditPackageId: req.creditPackageId,
+       referralCodeUsed: req.referralCodeUsed
     };
-
-    if (req.tier) {
-      purchase.tier = req.tier;
-      purchase.itemId = req.tier;
-    } else if (req.creditPackageId) {
-      purchase.creditPackageId = req.creditPackageId;
-      purchase.itemId = req.creditPackageId;
-    } else {
-      purchase.itemId = 'generic_item';
-    }
-
-    if (req.referralCodeUsed) {
-      purchase.referralCodeUsed = req.referralCodeUsed;
-    }
-
     try {
-      await cloudStore.createPurchase(purchase as Purchase);
+      await cloudStore.createPurchase(purchase);
       setShowCreditModal(false);
       setShowSuccessPopup(true);
       setView('dashboard');
     } catch (error) {
-      console.error("Firestore Save Error:", error);
+      console.error(error);
       alert("পেমেন্ট রিকোয়েস্ট পাঠাতে সমস্যা হয়েছে।");
     }
   };
 
-  // Fixed: Model type replaced with GirlfriendProfile
   const handleModelSelect = (m: GirlfriendProfile) => {
     setSelectedModel(m);
     setView('model-view');
@@ -184,17 +162,11 @@ const App: React.FC = () => {
 
   const handleUnlockModel = async (modelId: string): Promise<boolean> => {
      if (!user) return false;
-
-     // VIP (Package-3) users have instant access to everything
-     if (user.packageId === 'package3' || user.tier === 'VIP') {
-        return true;
-     }
-
+     if (user.packageId === 'package3' || user.tier === 'VIP') return true;
      if (user.status !== 'active') {
        if (confirm(`চ্যাট শুরু করতে একটি প্যাকেজ সাবস্ক্রাইব করুন।`)) setView('subscription');
        return false;
      }
-
      const result = await cloudStore.unlockModelSlot(user.uid, modelId);
      if (result.success) {
         setUser({ ...user, unlockedModels: [...(user.unlockedModels || []), modelId] });
@@ -218,10 +190,7 @@ const App: React.FC = () => {
               unlockedContentIds: [...(user.unlockedContentIds || []), contentId]
           });
           return true;
-      } catch (e) {
-          console.error(e);
-          return false;
-      }
+      } catch (e) { return false; }
   };
 
   return (
@@ -235,14 +204,12 @@ const App: React.FC = () => {
                {user.role === 'admin' && <button onClick={() => setView('admin-panel')} className="bg-blue-600 text-white px-4 py-2 rounded-full text-xs font-black uppercase shadow-lg">Admin</button>}
             </div>
             <div className="pointer-events-auto flex items-center gap-3">
-               {view !== 'dashboard' && view !== 'account' && (
-                   <div onClick={() => setShowCreditModal(true)} className="bg-gradient-to-r from-yellow-400 to-amber-500 text-black border border-yellow-300 px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 transition-all">
-                      <span className="font-black text-[10px]">C</span>
-                      <span className="font-black text-sm">{user.credits}</span>
-                      <span className="text-[8px] bg-black/10 px-1 py-0.5 rounded font-black tracking-widest">+ ADD</span>
-                   </div>
-               )}
-               <img onClick={() => setView('account')} src={user.photoURL} className="w-10 h-10 rounded-full border-2 border-pink-500 cursor-pointer shadow-md bg-white hover:scale-110 transition-all" />
+               <div onClick={() => setShowCreditModal(true)} className="bg-gradient-to-r from-yellow-400 to-amber-500 text-black border border-yellow-300 px-4 py-2 rounded-full flex items-center gap-2 cursor-pointer shadow-lg active:scale-95 transition-all">
+                  <span className="font-black text-[10px]">C</span>
+                  <span className="font-black text-sm">{user.credits}</span>
+                  <span className="text-[8px] bg-black/10 px-1 py-0.5 rounded font-black tracking-widest">+ ADD</span>
+               </div>
+               <img onClick={() => setView('account')} src={user.photoURL} className="w-10 h-10 rounded-full border-2 border-pink-500 cursor-pointer shadow-md bg-white hover:scale-110 transition-all" alt="Avatar" />
             </div>
          </div>
        )}
@@ -252,26 +219,19 @@ const App: React.FC = () => {
        
        {view === 'dashboard' && user && (
          <Dashboard 
-            models={models} 
-            unlockedModels={user.unlockedModels || []} 
-            setView={setView} 
-            onSelectModel={handleModelSelect}
-            userCredits={user.credits}
-            packageId={user.packageId}
+            models={models} unlockedModels={user.unlockedModels || []} 
+            setView={setView} onSelectModel={handleModelSelect}
+            userCredits={user.credits} packageId={user.packageId}
          />
        )}
 
        {view === 'model-view' && selectedModel && user && (
          <div className="pt-20">
             <ProfileDetail
-              profile={selectedModel}
-              userProfile={user}
-              onBack={() => setView('dashboard')}
-              onStartChat={() => setView('chat')}
-              onUnlockModel={handleUnlockModel} 
-              onUnlockContent={handleUnlockContent}
-              onPurchaseCredits={() => setShowCreditModal(true)}
-              onShowSubscription={() => setView('subscription')}
+              profile={selectedModel} userProfile={user}
+              onBack={() => setView('dashboard')} onStartChat={() => setView('chat')}
+              onUnlockModel={handleUnlockModel} onUnlockContent={handleUnlockContent}
+              onPurchaseCredits={() => setShowCreditModal(true)} onShowSubscription={() => setView('subscription')}
             />
          </div>
        )}
@@ -279,33 +239,23 @@ const App: React.FC = () => {
        {view === 'chat' && selectedModel && user && (
          <div className="h-screen w-full">
             <ChatInterface
-              profile={selectedModel}
-              onBack={() => setView('model-view')}
-              onMenuOpen={() => {}}
-              userName={user.name}
-              isPremium={user.isPremium || false}
-              userTier={user.tier || 'Free'}
-              onUpgrade={() => setView('subscription')}
-              history={chatHistory}
-              onSaveHistory={setChatHistory}
-              userCredits={user.credits}
+              profile={selectedModel} onBack={() => setView('model-view')}
+              onMenuOpen={() => {}} userName={user.name}
+              isPremium={user.isPremium || false} userTier={user.tier || 'Free'}
+              onUpgrade={() => setView('subscription')} history={chatHistory}
+              onSaveHistory={setChatHistory} userCredits={user.credits}
               onPurchaseCredits={() => setShowCreditModal(true)}
-              onUnlockContent={handleUnlockContent}
-              unlockedContentIds={user.unlockedContentIds || []}
+              onUnlockContent={handleUnlockContent} unlockedContentIds={user.unlockedContentIds || []}
             />
          </div>
        )}
 
        {view === 'account' && user && (
          <UserAccount
-           userProfile={user}
-           setUserProfile={setUser}
-           onBack={() => setView('dashboard')}
-           onUpgrade={() => setView('subscription')}
-           chatHistories={{}}
-           profiles={models}
-           onSelectProfile={handleModelSelect}
-           onPurchaseCredits={() => setShowCreditModal(true)}
+           userProfile={user} setUserProfile={setUser}
+           onBack={() => setView('dashboard')} onUpgrade={() => setView('subscription')}
+           chatHistories={{}} profiles={models}
+           onSelectProfile={handleModelSelect} onPurchaseCredits={() => setShowCreditModal(true)}
            onLogout={() => signOut(auth)}
          />
        )}
@@ -335,5 +285,4 @@ const App: React.FC = () => {
   );
 };
 
-// Added missing default export
 export default App;
